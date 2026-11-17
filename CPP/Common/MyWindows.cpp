@@ -116,6 +116,8 @@ HRESULT VariantClear(VARIANTARG *prop)
 
 HRESULT VariantCopy(VARIANTARG *dest, const VARIANTARG *src)
 {
+  if (dest == src)
+    return S_OK;
   HRESULT res = ::VariantClear(dest);
   if (res != S_OK)
     return res;

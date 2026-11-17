@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <functional>
+
 #ifdef _WIN32
 #include <wchar.h>
 #else
@@ -628,8 +630,13 @@ void AString::Add_Colon() { operator+=(':'); }
 AString &AString::operator+=(const char *s)
 {
   unsigned len = MyStringLen(s);
+  const std::less<const char *> less;
+  const bool isInternal = !less(s, _chars) && !less(_chars + _len, s);
+  const unsigned offset = isInternal ? (unsigned)(s - _chars) : 0;
   Grow(len);
-  MyStringCopy(_chars + _len, s);
+  if (isInternal)
+    s = _chars + offset;
+  memmove(_chars + _len, s, (size_t)len + 1);
   _len += len;
   return *this;
 }
@@ -643,7 +650,10 @@ void AString::Add_OptSpaced(const char *s)
 AString &AString::operator+=(const AString &s)
 {
   Grow(s._len);
-  MyStringCopy(_chars + _len, s._chars);
+  if (&s == this)
+    memmove(_chars + _len, s._chars, (size_t)s._len + 1);
+  else
+    MyStringCopy(_chars + _len, s._chars);
   _len += s._len;
   return *this;
 }
@@ -664,8 +674,13 @@ void AString::AddFrom(const char *s, unsigned len) // no check
 {
   if (len != 0)
   {
+    const std::less<const char *> less;
+    const bool isInternal = !less(s, _chars) && !less(_chars + _len, s);
+    const unsigned offset = isInternal ? (unsigned)(s - _chars) : 0;
     Grow(len);
-    memcpy(_chars + _len, s, len);
+    if (isInternal)
+      s = _chars + offset;
+    memmove(_chars + _len, s, len);
     len += _len;
     _chars[len] = 0;
     _len = len;
@@ -683,7 +698,7 @@ void AString::SetFrom(const char *s, unsigned len) // no check
     _limit = len;
   }
   if (len != 0)
-    memcpy(_chars, s, len);
+    memmove(_chars, s, len);
   _chars[len] = 0;
   _len = len;
 }
@@ -822,6 +837,13 @@ void AString::Insert(unsigned index, const char *s)
   unsigned num = MyStringLen(s);
   if (num != 0)
   {
+    const std::less<const char *> less;
+    if (!less(s, _chars) && !less(_chars + _len, s))
+    {
+      const AString temp(s);
+      Insert(index, temp);
+      return;
+    }
     InsertSpace(index, num);
     memcpy(_chars + index, s, num);
     _len += num;
@@ -834,7 +856,7 @@ void AString::Insert(unsigned index, const AString &s)
   if (num != 0)
   {
     InsertSpace(index, num);
-    memcpy(_chars + index, s, num);
+    memmove(_chars + index, s, num);
     _len += num;
   }
 }
@@ -893,6 +915,12 @@ void AString::Replace(const AString &oldString, const AString &newString)
     return; // 0;
   if (oldString == newString)
     return; // 0;
+  if (&newString == this)
+  {
+    const AString temp(newString);
+    Replace(oldString, temp);
+    return;
+  }
   const unsigned oldLen = oldString.Len();
   const unsigned newLen = newString.Len();
   // unsigned number = 0;
@@ -1177,7 +1205,7 @@ UString &UString::operator=(const wchar_t *s)
     _limit = len;
   }
   _len = len;
-  wmemcpy(_chars, s, len + 1);
+  wmemmove(_chars, s, len + 1);
   return *this;
 }
 
@@ -1209,7 +1237,7 @@ void UString::SetFrom(const wchar_t *s, unsigned len) // no check
     _limit = len;
   }
   if (len != 0)
-    wmemcpy(_chars, s, len);
+    wmemmove(_chars, s, len);
   _chars[len] = 0;
   _len = len;
 }
@@ -1306,8 +1334,13 @@ void UString::Add_Space_if_NotEmpty() { if (!IsEmpty()) Add_Space(); }
 UString &UString::operator+=(const wchar_t *s)
 {
   unsigned len = MyStringLen(s);
+  const std::less<const wchar_t *> less;
+  const bool isInternal = !less(s, _chars) && !less(_chars + _len, s);
+  const unsigned offset = isInternal ? (unsigned)(s - _chars) : 0;
   Grow(len);
-  wmemcpy(_chars + _len, s, len + 1);
+  if (isInternal)
+    s = _chars + offset;
+  wmemmove(_chars + _len, s, len + 1);
   _len += len;
   return *this;
 }
@@ -1315,7 +1348,10 @@ UString &UString::operator+=(const wchar_t *s)
 UString &UString::operator+=(const UString &s)
 {
   Grow(s._len);
-  wmemcpy(_chars + _len, s._chars, s._len + 1);
+  if (&s == this)
+    wmemmove(_chars + _len, s._chars, s._len + 1);
+  else
+    wmemcpy(_chars + _len, s._chars, s._len + 1);
   _len += s._len;
   return *this;
 }
@@ -1460,6 +1496,13 @@ void UString::Insert(unsigned index, const wchar_t *s)
   unsigned num = MyStringLen(s);
   if (num != 0)
   {
+    const std::less<const wchar_t *> less;
+    if (!less(s, _chars) && !less(_chars + _len, s))
+    {
+      const UString temp(s);
+      Insert(index, temp);
+      return;
+    }
     InsertSpace(index, num);
     wmemcpy(_chars + index, s, num);
     _len += num;
@@ -1472,7 +1515,7 @@ void UString::Insert(unsigned index, const UString &s)
   if (num != 0)
   {
     InsertSpace(index, num);
-    wmemcpy(_chars + index, s, num);
+    wmemmove(_chars + index, s, num);
     _len += num;
   }
 }
@@ -1531,6 +1574,12 @@ void UString::Replace(const UString &oldString, const UString &newString)
     return; // 0;
   if (oldString == newString)
     return; // 0;
+  if (&newString == this)
+  {
+    const UString temp(newString);
+    Replace(oldString, temp);
+    return;
+  }
   unsigned oldLen = oldString.Len();
   unsigned newLen = newString.Len();
   // unsigned number = 0;
@@ -1656,7 +1705,8 @@ UString2 &UString2::operator=(const wchar_t *s)
     _chars = newBuf;
   }
   _len = len;
-  MyStringCopy(_chars, s);
+  if (_chars)
+    MyStringCopy(_chars, s);
   return *this;
 }
 
@@ -1673,7 +1723,8 @@ void UString2::SetFromAscii(const char *s)
   wchar_t *chars = _chars;
   for (unsigned i = 0; i < len; i++)
     chars[i] = (unsigned char)s[i];
-  chars[len] = 0;
+  if (chars)
+    chars[len] = 0;
   _len = len;
 }
 
@@ -1690,7 +1741,10 @@ UString2 &UString2::operator=(const UString2 &s)
     _chars = newBuf;
   }
   _len = len;
-  MyStringCopy(_chars, s._chars);
+  if (len != 0)
+    MyStringCopy(_chars, s._chars);
+  else if (_chars)
+    _chars[0] = 0;
   return *this;
 }
 

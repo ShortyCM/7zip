@@ -12,6 +12,13 @@ bool CGlobal::Alloc(UINT flags, SIZE_T size) throw()
   HGLOBAL newBlock = ::GlobalAlloc(flags, size);
   if (newBlock == NULL)
     return false;
+  if (!Free())
+  {
+    const DWORD error = ::GetLastError();
+    ::GlobalFree(newBlock);
+    ::SetLastError(error);
+    return false;
+  }
   _global = newBlock;
   return true;
 }

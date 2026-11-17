@@ -849,11 +849,11 @@ Z7_CLASS_IMP_CHandler_IInArchive_2(
   HRESULT ParseDir(const Byte *data, size_t size, unsigned iNodeDir);
   int FindTargetItem_for_SymLink(unsigned dirNode, const AString &path) const;
 
-  HRESULT FillFileBlocks2(UInt32 block, unsigned level, unsigned numBlocks, CRecordVector<UInt32> &blocks);
-  HRESULT FillFileBlocks(const Byte *p, unsigned numBlocks, CRecordVector<UInt32> &blocks);
-  HRESULT FillExtents(const Byte *p, size_t size, CRecordVector<CExtent> &extents, int parentDepth);
+  HRESULT FillFileBlocks2(UInt32 block, unsigned level, unsigned numBlocks, CRecordVector<UInt32> &blocks, IInStream *sourceStream);
+  HRESULT FillFileBlocks(const Byte *p, unsigned numBlocks, CRecordVector<UInt32> &blocks, IInStream *sourceStream);
+  HRESULT FillExtents(const Byte *p, size_t size, CRecordVector<CExtent> &extents, int parentDepth, IInStream *sourceStream);
 
-  HRESULT GetStream_Node(unsigned nodeIndex, ISequentialInStream **stream);
+  HRESULT GetStream_Node(unsigned nodeIndex, ISequentialInStream **stream, IInStream *sourceStream = NULL);
   HRESULT ExtractNode(unsigned nodeIndex, CByteBuffer &data);
 
   void ClearRefs();
@@ -2211,26 +2211,40 @@ Z7_COM7F_IMF(CClusterInStream2::Read(void *data, UInt32 size, UInt32 *processedS
     }
     
     UInt64 newPos = ((UInt64)phyBlock << BlockBits) + offsetInBlock;
-    if (newPos != _physPos)
-    {
-      _physPos = newPos;
-      RINOK(SeekToPhys())
-    }
+    _physPos = newPos;
     
     _curRem = blockSize - offsetInBlock;
     
-    for (unsigned i = 1; i < 64 && (virtBlock + i) < (UInt32)Vector.Size() && phyBlock + i == Vector[virtBlock + i]; i++)
+    for (unsigned i = 1; i < 64
+        && (virtBlock + i) < (UInt32)Vector.Size()
+        && i <= (UInt32)0xFFFFFFFF - phyBlock
+        && phyBlock + i == Vector[virtBlock + i]; i++)
       _curRem += (UInt32)1 << BlockBits;
   }
 
   if (size > _curRem)
     size = _curRem;
+  // Other file streams can move the shared archive input.
+  const UInt64 phy = _physPos;
+  _physPos = (UInt64)(Int64)-1;
+  const HRESULT seekRes = InStream_SeekSet(Stream, phy);
+  if (seekRes != S_OK)
+  {
+    _curRem = 0;
+    return seekRes;
+  }
+  _physPos = phy;
   HRESULT res = Stream->Read(data, size, &size);
   if (processedSize)
     *processedSize = size;
   _physPos += size;
   _virtPos += size;
   _curRem -= size;
+  if (res != S_OK)
+  {
+    _physPos = (UInt64)(Int64)-1;
+    _curRem = 0;
+  }
   return res;
 }
  
@@ -2329,17 +2343,19 @@ Z7_COM7F_IMF(CExtInStream::Read(void *data, UInt32 size, UInt32 *processedSize))
     const UInt64 phyBlock = extent.PhyStart + bo;
     const UInt64 phy = (phyBlock << BlockBits) + offset;
     
-    if (phy != _phyPos)
-    {
-      RINOK(InStream_SeekSet(Stream, phy))
-      _phyPos = phy;
-    }
+    // Other file streams can move the shared archive input.
+    _phyPos = (UInt64)(Int64)-1;
+    RINOK(InStream_SeekSet(Stream, phy))
+    _phyPos = phy;
     
     UInt32 realProcessSize = 0;
     
     const HRESULT res = Stream->Read(data, size, &realProcessSize);
     
-    _phyPos += realProcessSize;
+    if (res == S_OK)
+      _phyPos += realProcessSize;
+    else
+      _phyPos = (UInt64)(Int64)-1;
     _virtPos += realProcessSize;
     if (processedSize)
       *processedSize = realProcessSize;
@@ -2367,7 +2383,7 @@ Z7_COM7F_IMF(CExtInStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosi
 
 
 
-HRESULT CHandler::FillFileBlocks2(UInt32 block, unsigned level, unsigned numBlocks, CRecordVector<UInt32> &blocks)
+HRESULT CHandler::FillFileBlocks2(UInt32 block, unsigned level, unsigned numBlocks, CRecordVector<UInt32> &blocks, IInStream *sourceStream)
 {
   const size_t blockSize = (size_t)1 << _h.BlockBits;
   CByteBuffer &tempBuf = _tempBufs[level];
@@ -2375,7 +2391,7 @@ HRESULT CHandler::FillFileBlocks2(UInt32 block, unsigned level, unsigned numBloc
 
   PRF2(printf("\n level = %d, block = %7d", level, (unsigned)block));
 
-  RINOK(SeekAndRead(_stream, block, tempBuf, blockSize))
+  RINOK(SeekAndRead(sourceStream, block, tempBuf, blockSize))
 
   const Byte *p = tempBuf;
   size_t num = (size_t)1 << (_h.BlockBits - 2);
@@ -2406,7 +2422,7 @@ HRESULT CHandler::FillFileBlocks2(UInt32 block, unsigned level, unsigned numBloc
         return S_FALSE;
       }
       
-      RINOK(FillFileBlocks2(val, level - 1, numBlocks, blocks))
+      RINOK(FillFileBlocks2(val, level - 1, numBlocks, blocks, sourceStream))
       continue;
     }
     
@@ -2423,7 +2439,7 @@ HRESULT CHandler::FillFileBlocks2(UInt32 block, unsigned level, unsigned numBloc
 
 static const unsigned kNumDirectNodeBlocks = 12;
 
-HRESULT CHandler::FillFileBlocks(const Byte *p, unsigned numBlocks, CRecordVector<UInt32> &blocks)
+HRESULT CHandler::FillFileBlocks(const Byte *p, unsigned numBlocks, CRecordVector<UInt32> &blocks, IInStream *sourceStream)
 {
   // ext2 supports zero blocks (blockIndex == 0).
 
@@ -2462,7 +2478,7 @@ HRESULT CHandler::FillFileBlocks(const Byte *p, unsigned numBlocks, CRecordVecto
       return S_FALSE;
     }
 
-    RINOK(FillFileBlocks2(val, level, numBlocks, blocks))
+    RINOK(FillFileBlocks2(val, level, numBlocks, blocks, sourceStream))
   }
   
   return S_OK;
@@ -2509,7 +2525,7 @@ static bool UpdateExtents(CRecordVector<CExtent> &extents, UInt32 block)
 }
 
 
-HRESULT CHandler::FillExtents(const Byte *p, size_t size, CRecordVector<CExtent> &extents, int parentDepth)
+HRESULT CHandler::FillExtents(const Byte *p, size_t size, CRecordVector<CExtent> &extents, int parentDepth, IInStream *sourceStream)
 {
   CExtentTreeHeader eth;
   if (!eth.Parse(p))
@@ -2558,19 +2574,21 @@ HRESULT CHandler::FillExtents(const Byte *p, size_t size, CRecordVector<CExtent>
     if (!UpdateExtents(extents, e.VirtBlock))
       return S_FALSE;
 
-    RINOK(SeekAndRead(_stream, e.PhyLeaf, tempBuf, blockSize))
-    RINOK(FillExtents(tempBuf, blockSize, extents, eth.Depth))
+    RINOK(SeekAndRead(sourceStream, e.PhyLeaf, tempBuf, blockSize))
+    RINOK(FillExtents(tempBuf, blockSize, extents, eth.Depth, sourceStream))
   }
 
   return S_OK;
 }
 
 
-HRESULT CHandler::GetStream_Node(unsigned nodeIndex, ISequentialInStream **stream)
+HRESULT CHandler::GetStream_Node(unsigned nodeIndex, ISequentialInStream **stream, IInStream *sourceStream)
 {
   COM_TRY_BEGIN
 
   *stream = NULL;
+  if (!sourceStream)
+    sourceStream = _stream;
 
   const CNode &node = _nodes[nodeIndex];
 
@@ -2606,9 +2624,9 @@ HRESULT CHandler::GetStream_Node(unsigned nodeIndex, ISequentialInStream **strea
     
     streamSpec->BlockBits = _h.BlockBits;
     streamSpec->Size = node.FileSize;
-    streamSpec->Stream = _stream;
+    streamSpec->Stream = sourceStream;
     
-    RINOK(FillExtents(node.Block, kNodeBlockFieldSize, streamSpec->Extents, -1))
+    RINOK(FillExtents(node.Block, kNodeBlockFieldSize, streamSpec->Extents, -1, sourceStream))
 
     UInt32 end = 0;
     if (!streamSpec->Extents.IsEmpty())
@@ -2666,10 +2684,10 @@ HRESULT CHandler::GetStream_Node(unsigned nodeIndex, ISequentialInStream **strea
 
     streamSpec->BlockBits = _h.BlockBits;
     streamSpec->Size = node.FileSize;
-    streamSpec->Stream = _stream;
+    streamSpec->Stream = sourceStream;
 
-    RINOK(FillFileBlocks(node.Block, numBlocks, streamSpec->Vector))
-    streamSpec->InitAndSeek();
+    RINOK(FillFileBlocks(node.Block, numBlocks, streamSpec->Vector, sourceStream))
+    RINOK(streamSpec->InitAndSeek())
   }
 
   *stream = streamTemp.Detach();
@@ -2694,6 +2712,81 @@ HRESULT CHandler::ExtractNode(unsigned nodeIndex, CByteBuffer &data)
   data.Alloc(size);
   _totalRead += size;
   return ReadStream_FALSE(inSeqStream, data, size);
+}
+
+
+Z7_CLASS_IMP_IInStream(
+  CInStreamWithResult
+)
+public:
+  CMyComPtr<IInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+Z7_COM7F_IMF(CInStreamWithResult::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Seek(offset, seekOrigin, newPosition);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
 }
 
 
@@ -2726,7 +2819,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   UInt64 totalPackSize;
   totalSize = totalPackSize = 0;
-  
+
   for (i = 0;; i++)
   {
     CLocalProgress *lps2 = lps.ClsPtr();
@@ -2776,8 +2869,11 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
     opRes = NExtract::NOperationResult::kDataError;
     {
+      CMyComPtr2_Create<IInStream, CInStreamWithResult> inCallbackStream;
+      inCallbackStream->Stream = _stream;
       CMyComPtr<ISequentialInStream> inSeqStream;
-      HRESULT hres = GetStream(index, &inSeqStream);
+      HRESULT hres = GetStream_Node((unsigned)_refs[item.Node], &inSeqStream, inCallbackStream);
+      RINOK(inCallbackStream->Result)
       if (hres == S_FALSE || !inSeqStream)
       {
         if (hres == E_OUTOFMEMORY)
@@ -2788,7 +2884,15 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       {
         RINOK(hres)
         {
-          hres = copyCoder.Code(inSeqStream, outStream, NULL, lps);
+          CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+          outCallbackStream->Stream = outStream;
+          CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> progressCallback;
+          progressCallback->Progress = lps;
+          hres = copyCoder.Code(inSeqStream, outCallbackStream, NULL, progressCallback);
+          // Preserve destination failures before classifying filesystem data errors.
+          RINOK(outCallbackStream->Result)
+          RINOK(progressCallback->Result)
+          RINOK(inCallbackStream->Result)
           if (hres == S_OK)
           {
             if (copyCoder.TotalSize == unpackSize)

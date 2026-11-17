@@ -615,13 +615,18 @@ struct CArchiveExtractCallback_Closer
   
   HRESULT Close()
   {
-    HRESULT res = S_OK;
-    if (_ref)
+    if (!_ref)
+      return S_OK;
+    CArchiveExtractCallback * const ref = _ref;
+    _ref = NULL;
+    try
     {
-      res = _ref->CloseArc();
-      _ref = NULL;
+      return ref->CloseArc();
     }
-    return res;
+    catch (...)
+    {
+      return E_OUTOFMEMORY;
+    }
   }
   
   ~CArchiveExtractCallback_Closer()

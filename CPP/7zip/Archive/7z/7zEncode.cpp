@@ -259,12 +259,22 @@ Z7_COM7F_IMF(CSequentialOutTempBufferImp2::Write(const void *data, UInt32 size, 
   COM_TRY_BEGIN
   if (processed)
     *processed = 0;
-  RINOK(TempBuffer.Write_HRESULT(data, size))
+  const UInt64 startSize = TempBuffer.GetDataSize();
+  HRESULT result;
+  try
+  {
+    result = TempBuffer.Write_HRESULT(data, size);
+  }
+  catch (...)
+  {
+    result = E_OUTOFMEMORY;
+  }
+  const UInt32 written = (UInt32)(TempBuffer.GetDataSize() - startSize);
   if (processed)
-    *processed = size;
+    *processed = written;
   if (_mtProgressSpec)
-    _mtProgressSpec->AddOutSize(size);
-  return S_OK;
+    _mtProgressSpec->AddOutSize(written);
+  return result;
   COM_TRY_END
 }
 
@@ -287,7 +297,7 @@ Z7_COM7F_IMF(CSequentialOutMtNotify::Write(const void *data, UInt32 size, UInt32
   if (processed)
     *processed = realProcessed;
   if (_mtProgressSpec)
-    _mtProgressSpec->AddOutSize(size);
+    _mtProgressSpec->AddOutSize(realProcessed);
   return res;
 }
 

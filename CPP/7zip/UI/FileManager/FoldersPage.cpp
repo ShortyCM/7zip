@@ -5,6 +5,9 @@
 #include "FoldersPageRes.h"
 #include "FoldersPage.h"
 
+#include "../../../Windows/ErrorMsg.h"
+#include "../Explorer/MyMessages.h"
+
 #include "../FileManager/BrowseDialog.h"
 #include "../FileManager/HelpUtils.h"
 #include "../FileManager/LangUtils.h"
@@ -160,7 +163,12 @@ LONG CFoldersPage::OnApply()
   if (_needSave)
   {
     GetWorkDir(m_WorkDirInfo);
-    m_WorkDirInfo.Save();
+    const LONG result = m_WorkDirInfo.Save();
+    if (result != ERROR_SUCCESS)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
     _needSave = false;
   }
   return PSNRET_NOERROR;

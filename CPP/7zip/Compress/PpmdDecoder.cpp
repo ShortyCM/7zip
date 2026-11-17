@@ -33,7 +33,11 @@ Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *props, UInt32 size))
   if (size < 5)
     return E_INVALIDARG;
   _order = props[0];
-  const UInt32 memSize = GetUi32(props + 1);
+  const UInt32 memSize =
+      (UInt32)props[1] |
+      ((UInt32)props[2] << 8) |
+      ((UInt32)props[3] << 16) |
+      ((UInt32)props[4] << 24);
   if (_order < PPMD7_MIN_ORDER ||
       _order > PPMD7_MAX_ORDER ||
       memSize < PPMD7_MIN_MEM_SIZE ||
@@ -49,7 +53,7 @@ Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *props, UInt32 size))
 #define MY_rangeDec  _ppmd.rc.dec
 
 #define CHECK_EXTRA_ERROR \
-    if (_inStream.Extra) { \
+    if (_inStream.Res != SZ_OK || _inStream.Extra) { \
       _status = kStatus_Error; \
       return (_res = (_inStream.Res != SZ_OK ? _inStream.Res: S_FALSE)); }
 
@@ -67,6 +71,7 @@ HRESULT CDecoder::CodeSpec(Byte *memStream, UInt32 size)
       _inStream.Init();
       if (!Ppmd7z_RangeDec_Init(&MY_rangeDec))
       {
+        CHECK_EXTRA_ERROR
         _status = kStatus_Error;
         return (_res = S_FALSE);
       }
@@ -207,6 +212,8 @@ Z7_COM7F_IMF(CDecoder::ReleaseInStream())
 
 Z7_COM7F_IMF(CDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
   const UInt64 startPos = _processedSize;
   const HRESULT res = CodeSpec((Byte *)data, size);
   if (processedSize)

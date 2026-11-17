@@ -346,7 +346,11 @@ static WRes MtDec_ThreadFunc2(CMtDecThread *t)
             {
               size = p->inBufSize;
               
-              res = SeqInStream_ReadMax(p->inStream, data, &size);
+              res = SZ_OK;
+              if (finish)
+                size = 0;
+              else
+                res = SeqInStream_ReadMax(p->inStream, data, &size);
               
               // size = 10; // test
 

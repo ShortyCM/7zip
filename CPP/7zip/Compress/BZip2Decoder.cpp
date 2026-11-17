@@ -1309,6 +1309,8 @@ Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream 
   Base.InStream = NULL;
   _outStream = NULL;
 
+  RINOK(_writeRes)
+
   /*
   if (res == S_OK)
     if (FinishMode && inSize && *inSize != GetInputProcessedSize())
@@ -1615,7 +1617,11 @@ Z7_COM7F_IMF(CDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
         size = (UInt32)rem;
     }
     if (size == 0)
+    {
+      if (FinishMode && _outSizeDefined && _outPosTotal == _outSize)
+        return (ErrorResult = S_FALSE);
       return S_OK;
+    }
     
     if (_blockFinished)
     {
@@ -1730,7 +1736,11 @@ Z7_COM7F_IMF(CNsisDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
         size = (UInt32)rem;
     }
     if (size == 0)
+    {
+      if (FinishMode && _outSizeDefined && _outPosTotal == _outSize)
+        return (ErrorResult = S_FALSE);
       return S_OK;
+    }
     
     if (_blockFinished)
     {

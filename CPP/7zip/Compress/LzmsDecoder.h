@@ -4,6 +4,8 @@
 #ifndef ZIP7_INC_LZMS_DECODER_H
 #define ZIP7_INC_LZMS_DECODER_H
 
+#include <string.h>
+
 #include "../../../C/CpuArch.h"
 #include "../../../C/HuffEnc.h"
 
@@ -11,6 +13,13 @@
 
 namespace NCompress {
 namespace NLzms {
+
+static Z7_FORCE_INLINE UInt16 Lzms_Load16(const void *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
 
 const unsigned k_NumLitSyms = 256;
 const unsigned k_NumLenSyms = 54;
@@ -113,7 +122,7 @@ struct CRangeDecoder
   void Init(const Byte *data, size_t /* size */) throw()
   {
     range = 0xFFFFFFFF;
-    code = (((UInt32)GetUi16(data)) << 16) | GetUi16(data + 2);
+    code = (((UInt32)Lzms_Load16(data)) << 16) | Lzms_Load16(data + 2);
     cur = data + 4;
     // end = data + size;
   }
@@ -125,7 +134,7 @@ struct CRangeDecoder
       range <<= 16;
       code <<= 16;
       // if (cur >= end) throw 1;
-      code |= GetUi16(cur);
+      code |= Lzms_Load16(cur);
       cur += 2;
     }
   }
@@ -143,7 +152,7 @@ struct CRangeDecoder
       range <<= 16;
       code <<= 16;
       // if (cur >= end) throw 1;
-      code |= GetUi16(cur);
+      code |= Lzms_Load16(cur);
       cur += 2;
     }
 

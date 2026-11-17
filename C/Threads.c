@@ -580,7 +580,14 @@ WRes Thread_Wait_Close(CThread *p)
 static WRes Event_Create(CEvent *p, int manualReset, int signaled)
 {
   RINOK(pthread_mutex_init(&p->_mutex, NULL))
-  RINOK(pthread_cond_init(&p->_cond, NULL))
+  {
+    const int res = pthread_cond_init(&p->_cond, NULL);
+    if (res != 0)
+    {
+      pthread_mutex_destroy(&p->_mutex);
+      return res;
+    }
+  }
   p->_manual_reset = manualReset;
   p->_state = (signaled ? True : False);
   p->_created = 1;
@@ -655,7 +662,14 @@ WRes Semaphore_Create(CSemaphore *p, UInt32 initCount, UInt32 maxCount)
   if (initCount > maxCount || maxCount < 1)
     return EINVAL;
   RINOK(pthread_mutex_init(&p->_mutex, NULL))
-  RINOK(pthread_cond_init(&p->_cond, NULL))
+  {
+    const int res = pthread_cond_init(&p->_cond, NULL);
+    if (res != 0)
+    {
+      pthread_mutex_destroy(&p->_mutex);
+      return res;
+    }
+  }
   p->_count = initCount;
   p->_maxCount = maxCount;
   p->_created = 1;
@@ -685,7 +699,6 @@ WRes Semaphore_OptCreateInit(CSemaphore *p, UInt32 initCount, UInt32 maxCount)
 
 WRes Semaphore_ReleaseN(CSemaphore *p, UInt32 releaseCount)
 {
-  UInt32 newCount;
   int ret;
 
   if (releaseCount < 1)
@@ -693,12 +706,11 @@ WRes Semaphore_ReleaseN(CSemaphore *p, UInt32 releaseCount)
 
   RINOK(pthread_mutex_lock(&p->_mutex))
 
-  newCount = p->_count + releaseCount;
-  if (newCount > p->_maxCount)
+  if (releaseCount > p->_maxCount - p->_count)
     ret = ERROR_TOO_MANY_POSTS; // EINVAL;
   else
   {
-    p->_count = newCount;
+    p->_count += releaseCount;
     ret = pthread_cond_broadcast(&p->_cond);
   }
   RINOK(pthread_mutex_unlock(&p->_mutex))

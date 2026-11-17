@@ -19,6 +19,12 @@
 
 #include "../7zip/Common/RegisterCodec.h"
 
+static void Xxh64_StoreDigest(Byte *digest, UInt64 value)
+{
+  for (unsigned i = 0; i < 8; i++)
+    digest[i] = (Byte)(value >> (i * 8));
+}
+
 Z7_CLASS_IMP_COM_1(
   CXxh64Hasher
   , IHasher
@@ -56,7 +62,7 @@ Z7_COM7F_IMF2(void, CXxh64Hasher::Update(const void *data, UInt32 size))
 Z7_COM7F_IMF2(void, CXxh64Hasher::Final(Byte *digest))
 {
   const UInt64 val = Xxh64_Digest(&_state);
-  SetUi64(digest, val)
+  Xxh64_StoreDigest(digest, val);
 }
 
 REGISTER_HASHER(CXxh64Hasher, 0x211, "XXH64", 8)
@@ -89,7 +95,7 @@ Z7_COM7F_IMF2(void, CXxh64Hasher::Update(const void *data, UInt32 size))
 Z7_COM7F_IMF2(void, CXxh64Hasher::Final(Byte *digest))
 {
   const UInt64 val = XXH64_digest(&_state);
-  SetUi64(digest, val)
+  Xxh64_StoreDigest(digest, val);
 }
 
 REGISTER_HASHER(CXxh64Hasher, 0x212, "XXH64a", 8)

@@ -181,7 +181,9 @@ HRESULT CDecoder::Init_and_CheckPassword(bool &passwOK)
 
   memmove(p, p + 10, rdSize);
   const Byte *p2 = p + rdSize + 10;
-  UInt32 reserved = GetUi32(p2);
+  UInt32 reserved;
+  memcpy(&reserved, p2, sizeof(reserved));
+  reserved = GetUi32(&reserved);
   p2 += 4;
   
   /*

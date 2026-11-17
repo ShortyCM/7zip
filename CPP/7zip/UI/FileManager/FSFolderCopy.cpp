@@ -31,8 +31,9 @@ namespace NFsFolder {
 
 static const char * const k_CannotCopyDirToAltStream = "Cannot copy folder as alternate stream";
 
+static UString GetLastErrorMessage();
 
-HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib)
+HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib, bool createAlways)
 {
   ErrorFileIndex = -1;
   ErrorMessage.Empty();
@@ -48,12 +49,14 @@ HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib)
     if (!inFile.Open(inPath))
     {
       ErrorFileIndex = 0;
+      ErrorMessage = GetLastErrorMessage();
       return S_OK;
     }
     
-    if (!outFile.Create_ALWAYS(outPath))
+    if (!(createAlways ? outFile.Create_ALWAYS(outPath) : outFile.Create_NEW(outPath)))
     {
       ErrorFileIndex = 1;
+      ErrorMessage = GetLastErrorMessage();
       return S_OK;
     }
     
@@ -63,6 +66,7 @@ HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib)
       if (!inFile.Read(buf, kBufSize, num))
       {
         ErrorFileIndex = 0;
+        ErrorMessage = GetLastErrorMessage();
         return S_OK;
       }
       if (num == 0)
@@ -72,10 +76,12 @@ HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib)
       if (!outFile.Write(buf, num, written))
       {
         ErrorFileIndex = 1;
+        ErrorMessage = GetLastErrorMessage();
         return S_OK;
       }
       if (written != num)
       {
+        ErrorFileIndex = 1;
         ErrorMessage = "Write error";
         return S_OK;
       }
@@ -85,6 +91,12 @@ HRESULT CCopyStateIO::MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib)
         UInt64 completed = StartPos + CurrentSize;
         RINOK(Progress->SetCompleted(&completed))
       }
+    }
+    if (!outFile.Close())
+    {
+      ErrorFileIndex = 1;
+      ErrorMessage = GetLastErrorMessage();
+      return S_OK;
     }
   }
 
@@ -178,6 +190,8 @@ static DWORD CALLBACK CopyProgressRoutine(
     pi.TotalSize += (UInt64)TotalFileSize.QuadPart - pi.FileSize;
     pi.FileSize = (UInt64)TotalFileSize.QuadPart;
     pi.ProgressResult = pi.Progress->SetTotal(pi.TotalSize);
+    if (pi.ProgressResult != S_OK)
+      return PROGRESS_CANCEL;
   }
   const UInt64 completed = pi.StartPos + (UInt64)TotalBytesTransferred.QuadPart;
   pi.ProgressResult = pi.Progress->SetCompleted(&completed);
@@ -448,13 +462,36 @@ HRESULT SendLastErrorMessage(IFolderOperationsExtractCallback *callback, const F
   return SendMessageError(callback, GetLastErrorMessage(), fileName);
 }
 
+static bool GetPathsForComparison(const FString &src, const FString &dest,
+    UString &fullSrc, UString &fullDest)
+{
+  #ifdef Z7_LONG_PATH
+  return GetSuperPaths(src, dest, fullSrc, fullDest, false);
+  #else
+  FString srcPath, destPath;
+  if (!GetFullPath(src, srcPath) || !GetFullPath(dest, destPath))
+    return false;
+  fullSrc = fs2us(srcPath);
+  fullDest = fs2us(destPath);
+  return true;
+  #endif
+}
+
+bool AreFilePathsEqual(const FString &src, const FString &dest)
+{
+  UString fullSrc, fullDest;
+  if (GetPathsForComparison(src, dest, fullSrc, fullDest))
+    return CompareFileNames(fullDest, fullSrc) == 0;
+  return CompareFileNames(dest, src) == 0;
+}
+
 static HRESULT CopyFile_Ask(
     CCopyState &state,
     const FString &srcPath,
     const CFileInfo &srcFileInfo,
     const FString &destPath)
 {
-  if (CompareFileNames(destPath, srcPath) == 0)
+  if (AreFilePathsEqual(srcPath, destPath))
   {
     RINOK(SendMessageError(state.Callback,
         state.MoveMode ?
@@ -555,14 +592,27 @@ static FString CombinePath(const FString &folderPath, const FString &fileName)
   return s;
 }
 
-static bool IsDestChild(const FString &src, const FString &dest)
+static bool IsDestChildPath(const FString &src, const FString &dest)
 {
   unsigned len = src.Len();
-  if (dest.Len() < len)
+  unsigned destLen = dest.Len();
+  while (len > 1 && IsPathSepar(src[len - 1]))
+    len--;
+  while (destLen > 1 && IsPathSepar(dest[destLen - 1]))
+    destLen--;
+  if (len == 0 || destLen < len)
     return false;
-  if (dest.Len() != len && dest[len] != FCHAR_PATH_SEPARATOR)
+  if (destLen != len && !IsPathSepar(dest[len]) && !IsPathSepar(src[len - 1]))
     return false;
-  return CompareFileNames(dest.Left(len), src) == 0;
+  return CompareFileNames(dest.Left(len), src.Left(len)) == 0;
+}
+
+static bool IsDestChild(const FString &src, const FString &dest)
+{
+  UString fullSrc, fullDest;
+  if (GetPathsForComparison(src, dest, fullSrc, fullDest))
+    return IsDestChildPath(us2fs(fullSrc), us2fs(fullDest));
+  return IsDestChildPath(src, dest);
 }
 
 static HRESULT CopyFolder(
@@ -576,8 +626,8 @@ static HRESULT CopyFolder(
   {
     RINOK(SendMessageError(state.Callback,
         state.MoveMode ?
-          "Cannot copy folder onto itself" :
-          "Cannot move folder onto itself"
+          "Cannot move folder onto itself" :
+          "Cannot copy folder onto itself"
         , destPath))
     return E_ABORT;
   }
@@ -605,8 +655,8 @@ static HRESULT CopyFolder(
     bool found;
     if (!enumerator.Next(fi, found))
     {
-      SendLastErrorMessage(state.Callback, srcPath);
-      return S_OK;
+      RINOK(SendLastErrorMessage(state.Callback, srcPath))
+      return E_ABORT;
     }
     if (!found)
       break;

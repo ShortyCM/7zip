@@ -5,6 +5,28 @@
 
 #include "../IStream.h"
 
+inline HRESULT Stream_AddOffset(UInt64 base, Int64 offset, Int64 &position) throw()
+{
+  UInt64 pos;
+  if (offset < 0)
+  {
+    const UInt64 distance = (UInt64)0 - (UInt64)offset;
+    if (distance > base)
+      return HRESULT_WIN32_ERROR_NEGATIVE_SEEK;
+    pos = base - distance;
+  }
+  else
+  {
+    pos = base + (UInt64)offset;
+    if (pos < base)
+      return HRESULT_WIN32_ERROR_NEGATIVE_SEEK;
+  }
+  if (pos >= ((UInt64)1 << 63))
+    return HRESULT_WIN32_ERROR_NEGATIVE_SEEK;
+  position = (Int64)pos;
+  return S_OK;
+}
+
 inline HRESULT InStream_SeekSet(IInStream *stream, UInt64 offset) throw()
   {  return stream->Seek((Int64)offset, STREAM_SEEK_SET, NULL); }
 inline HRESULT InStream_GetPos(IInStream *stream, UInt64 &curPosRes) throw()

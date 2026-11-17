@@ -7,6 +7,7 @@
 #include "../../../Common/IntToString.h"
 #include "../../../Common/StringConvert.h"
 
+#include "../../../Windows/ErrorMsg.h"
 #include "../../../Windows/FileDir.h"
 #include "../../../Windows/FileName.h"
 #include "../../../Windows/System.h"
@@ -400,7 +401,7 @@ static const UInt32 k_PathMode_IDs[] =
   IDS_EXTRACT_PATHS_ABS
 };
 
-void AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal);
+bool AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal);
 
 void CCompressDialog::SetMethods(const CObjectVector<CCodecInfoUser> &userCodecs)
 {
@@ -533,16 +534,30 @@ bool CCompressDialog::OnInit()
   for (unsigned i = 0; i < m_RegistryInfo.ArcPaths.Size() && i < kHistorySize; i++)
     m_ArchivePath.AddString(m_RegistryInfo.ArcPaths[i]);
 
-  AddComboItems(m_UpdateMode, k_UpdateMode_IDs, Z7_ARRAY_SIZE(k_UpdateMode_IDs),
-      k_UpdateMode_Vals, Info.UpdateMode);
-
-  AddComboItems(m_PathMode, k_PathMode_IDs, Z7_ARRAY_SIZE(k_PathMode_IDs),
-      k_PathMode_Vals, Info.PathMode);
+  if (!AddComboItems(m_UpdateMode, k_UpdateMode_IDs, Z7_ARRAY_SIZE(k_UpdateMode_IDs),
+          k_UpdateMode_Vals, Info.UpdateMode) ||
+      !AddComboItems(m_PathMode, k_PathMode_IDs, Z7_ARRAY_SIZE(k_PathMode_IDs),
+          k_PathMode_Vals, Info.PathMode))
+  {
+    ShowErrorMessage(*this, NError::MyFormatMessage(ERROR_NOT_ENOUGH_MEMORY));
+    CModalDialog::OnCancel();
+    return false;
+  }
 
   CheckButton(IDX_COMPRESS_SHARED, Info.OpenShareForWrite);
   CheckButton(IDX_COMPRESS_DEL, Info.DeleteAfterCompressing);
 
   FormatChanged(false); // isChanged
+
+  if (Info.MTime.Def || Info.CTime.Def || Info.ATime.Def || Info.SetArcMTime.Def)
+  {
+    NCompression::CFormatOptions &fo = Get_FormatOptions();
+    if (Info.MTime.Def) fo.MTime = Info.MTime;
+    if (Info.CTime.Def) fo.CTime = Info.CTime;
+    if (Info.ATime.Def) fo.ATime = Info.ATime;
+    if (Info.SetArcMTime.Def) fo.SetArcMTime = Info.SetArcMTime;
+    ShowOptionsString();
+  }
 
   // OnButtonSFX();
 
@@ -573,11 +588,6 @@ void CCompressDialog::UpdatePasswordControl()
   const TCHAR c = showPassword ? (TCHAR)0: TEXT('*');
   _password1Control.SetPasswordChar((WPARAM)c);
   _password2Control.SetPasswordChar((WPARAM)c);
-  UString password;
-  _password1Control.GetText(password);
-  _password1Control.SetText(password);
-  _password2Control.GetText(password);
-  _password2Control.SetText(password);
 
   ShowItem_Bool(IDT_PASSWORD_REENTER, !showPassword);
   _password2Control.Show_Bool(!showPassword);
@@ -792,16 +802,13 @@ void CCompressDialog::OnButtonSFX()
   }
   else
   {
+    bool prevWasSFX = false;
     if (dotPos >= 0)
     {
       const UString ext = fileName.Ptr(dotPos);
-      if (ext.IsEqualTo_Ascii_NoCase(kExeExt))
-      {
-        fileName.DeleteFrom(dotPos);
-        m_ArchivePath.SetText(fileName);
-      }
+      prevWasSFX = ext.IsEqualTo_Ascii_NoCase(kExeExt);
     }
-    SetArchiveName2(false); // it's for OnInit
+    SetArchiveName2(prevWasSFX);
   }
 
   // CheckVolumeEnable();
@@ -812,7 +819,8 @@ bool CCompressDialog::GetFinalPath_Smart(UString &resPath) const
 {
   resPath.Empty();
   UString name;
-  m_ArchivePath.GetText(name);
+  if (!m_ArchivePath.GetText(name))
+    return false;
   name.Trim();
   FString fullPath;
   UString dirPrefx = DirPrefix;
@@ -1004,6 +1012,8 @@ void CCompressDialog::OnButtonSetArchive()
   {
     m_Format.SetCurSel(bi.FilterIndex);
     SaveOptionsInMem();
+    Info.FormatIndex = (int)GetFormatIndex();
+    m_PrevFormat = Info.FormatIndex;
     FormatChanged(true); // isChanged
     return;
   }
@@ -1065,7 +1075,15 @@ void SetErrorMessage_MemUsage(UString &s, UInt64 reqSize, UInt64 ramSize, UInt64
 
 void CCompressDialog::OnOK()
 {
-  _password1Control.GetText(Info.Password);
+  UString password, password2;
+  if (!_password1Control.GetText(password) ||
+      (!IsShowPasswordChecked() && !_password2Control.GetText(password2)))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
+  Info.Password = password;
   if (IsZipFormat())
   {
     if (!IsAsciiString(Info.Password))
@@ -1085,8 +1103,6 @@ void CCompressDialog::OnOK()
   }
   if (!IsShowPasswordChecked())
   {
-    UString password2;
-    _password2Control.GetText(password2);
     if (password2 != Info.Password)
     {
       ShowErrorMessageHwndRes(*this, IDS_PASSWORD_NOT_MATCH);
@@ -1209,7 +1225,12 @@ void CCompressDialog::OnOK()
   m_Params.GetText(Info.Options);
   
   UString volumeString;
-  m_Volume.GetText(volumeString);
+  if (!m_Volume.GetText(volumeString))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
   volumeString.Trim();
   Info.VolumeSizes.Clear();
   
@@ -1280,6 +1301,8 @@ void CCompressDialog::ArcPath_WasChanged(const UString &path)
     {
       m_Format.SetCurSel(i);
       SaveOptionsInMem();
+      Info.FormatIndex = (int)GetFormatIndex();
+      m_PrevFormat = Info.FormatIndex;
       FormatChanged(true); // isChanged
       return;
     }
@@ -1482,7 +1505,13 @@ void CCompressDialog::SetArchiveName(const UString &name)
   m_PrevFormat = Info.FormatIndex;
   if (ai.Flags_KeepName())
   {
-    fileName = OriginalFileName;
+    unsigned namePos = (unsigned)(fileName.ReverseFind_PathSepar() + 1);
+    #if defined(_WIN32) && !defined(UNDER_CE)
+    if (namePos == 0 && NName::IsDrivePath2(fileName))
+      namePos = 2;
+    #endif
+    fileName.DeleteFrom(namePos);
+    fileName += OriginalFileName;
   }
   else
   {
@@ -3628,14 +3657,12 @@ void COptionsDialog::SetTimeMAC()
   
   ZTime.DefaultVal = false;
 
-  const NCompression::CFormatOptions &fo = cd->Get_FormatOptions();
-  
-  CheckButton_BoolBox (m_allow, fo.MTime, MTime );
-  CheckButton_BoolBox (c_allow, fo.CTime, CTime );
-  CheckButton_BoolBox (a_allow, fo.ATime, ATime );
-  CheckButton_BoolBox (true, fo.SetArcMTime, ZTime);
+  CheckButton_BoolBox (m_allow, MTime.BoolPair, MTime );
+  CheckButton_BoolBox (c_allow, CTime.BoolPair, CTime );
+  CheckButton_BoolBox (a_allow, ATime.BoolPair, ATime );
+  CheckButton_BoolBox (true, ZTime.BoolPair, ZTime);
 
-  if (m_allow && !fo.MTime.Def)
+  if (m_allow && !MTime.BoolPair.Def)
   {
     const bool isSingleFile = ai.Flags_KeepName();
     if (!isSingleFile)

@@ -72,6 +72,7 @@ IMP_IInArchive_ArcProps
 
 Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -159,6 +160,7 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -392,6 +394,8 @@ HRESULT CHandler::SkipTo(UInt32 index)
       if (!_arc.filled)
       {
         _arc._phySize_Defined = true;
+        if (_arc._error != k_ErrorType_OK)
+          return S_FALSE;
         return E_INVALIDARG;
       }
       _latestIsRead = true;
@@ -420,8 +424,10 @@ static void PaxTimeToProp(const CPaxTime &pt, NWindows::NCOM::CPropVariant &prop
   UInt64 v;
   if (!NTime::UnixTime64_To_FileTime64(pt.Sec, v))
     return;
-  if (pt.Ns != 0)
-    v += pt.Ns / 100;
+  const UInt32 fractionalTicks = pt.Ns / 100;
+  if (v > (UInt64)(Int64)-1 - fractionalTicks)
+    return;
+  v += fractionalTicks;
   FILETIME ft;
   ft.dwLowDateTime = (DWORD)v;
   ft.dwHighDateTime = (DWORD)(v >> 32);
@@ -720,10 +726,70 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
 }
 
 
+Z7_CLASS_IMP_COM_1(
+  CSparseSequentialInStream,
+  ISequentialInStream
+)
+  CMyComPtr<ISequentialInStream> _stream;
+  const CItemEx *_item;
+  UInt64 _position;
+  unsigned _block;
+public:
+  void Init(ISequentialInStream *stream, const CItemEx *item)
+  {
+    _stream = stream;
+    _item = item;
+    _position = 0;
+    _block = 0;
+  }
+};
+
+Z7_COM7F_IMF(CSparseSequentialInStream::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0 || _position >= _item->Size)
+    return S_OK;
+  const UInt64 remaining = _item->Size - _position;
+  if (size > remaining)
+    size = (UInt32)remaining;
+  while (_block < _item->SparseBlocks.Size())
+  {
+    const CSparseBlock &block = _item->SparseBlocks[_block];
+    if (_position < block.Offset + block.Size)
+      break;
+    ++_block;
+  }
+  HRESULT res = S_OK;
+  if (_block < _item->SparseBlocks.Size()
+      && _position >= _item->SparseBlocks[_block].Offset)
+  {
+    const CSparseBlock &block = _item->SparseBlocks[_block];
+    const UInt64 available = block.Size - (_position - block.Offset);
+    if (size > available)
+      size = (UInt32)available;
+    res = _stream->Read(data, size, &size);
+  }
+  else
+  {
+    const UInt64 next = _block < _item->SparseBlocks.Size() ?
+        _item->SparseBlocks[_block].Offset : _item->Size;
+    if (size > next - _position)
+      size = (UInt32)(next - _position);
+    memset(data, 0, size);
+  }
+  _position += size;
+  if (processedSize)
+    *processedSize = size;
+  return res;
+}
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
   COM_TRY_BEGIN
+  if (numItems == 0)
+    return S_OK;
   ISequentialInStream *stream = _seqStream;
   const bool seqMode = (_stream == NULL);
   if (!seqMode)
@@ -736,7 +802,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     return S_OK;
   UInt64 totalSize = 0;
   UInt32 i;
-  for (i = 0; i < numItems; i++)
+  for (i = 0; !seqMode && i < numItems; i++)
     totalSize += _items[allFilesMode ? i : indices[i]].Get_UnpackSize();
   RINOK(extractCallback->SetTotal(totalSize))
 
@@ -751,18 +817,19 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   for (i = 0; ; i++)
   {
-    CLocalProgress *lps2 = lps.ClsPtr();
-    lps2->InSize = totalPackSize;
-    lps2->OutSize = totalSize;
-    RINOK(lps2->SetCur())
-    if (i >= numItems && !seqMode)
+    lps->InSize = totalPackSize;
+    lps->OutSize = totalSize;
+    RINOK(lps->SetCur())
+    if (i >= numItems && (!seqMode || !allFilesMode))
       break;
     const UInt32 index = allFilesMode ? i : indices[i];
     const CItemEx *item;
     if (seqMode)
     {
+      if (index < _curIndex)
+        return E_INVALIDARG;
       const HRESULT res = SkipTo(index);
-      if (res == E_INVALIDARG)
+      if (res == E_INVALIDARG && allFilesMode)
         break;
       RINOK(res)
       item = &_latestItem;
@@ -774,6 +841,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         NExtract::NAskMode::kTest :
         NExtract::NAskMode::kExtract;
     Int32 opRes = NExtract::NOperationResult::kOK;
+    bool inputTruncated = false;
     {
     CMyComPtr<ISequentialOutStream> realOutStream;
     RINOK(extractCallback->GetStream(index, &realOutStream, askMode))
@@ -812,14 +880,29 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     // realOutStream.Release();
     outStreamSpec->Init(skipMode ? 0 : unpackSize, true);
 
+    const UInt64 packSize = item->Get_PackSize_Aligned();
+    inStream->Init(packSize);
     CMyComPtr<ISequentialInStream> inStream2;
-    if (!item->Is_Sparse())
+    if (!item->Is_Sparse() || skipMode)
       inStream2 = inStream;
+    else if (seqMode)
+    {
+      if (item->Method_Error)
+        opRes = NExtract::NOperationResult::kHeadersError;
+      else
+      {
+        CSparseSequentialInStream *sparseStream = new CSparseSequentialInStream;
+        inStream2 = sparseStream;
+        sparseStream->Init(inStream, item);
+      }
+    }
     else
     {
       const HRESULT hres = GetStream(index, &inStream2);
       if (hres == E_NOTIMPL)
         opRes = NExtract::NOperationResult::kHeadersError; // kUnsupportedMethod
+      else if (hres != S_OK)
+        return hres;
       else if (!inStream2)
       {
         opRes = NExtract::NOperationResult::kDataError;
@@ -838,7 +921,6 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         {
           RINOK(InStream_SeekSet(_stream, item->Get_DataPos()))
         }
-        inStream->Init(item->Get_PackSize_Aligned());
         RINOK(copyCoder.Code(inStream2, outStreamSpec, NULL, lps))
       }
       if (outStreamSpec->GetRem() != 0)
@@ -846,6 +928,14 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     }
     if (seqMode)
     {
+      _arc._phySize += packSize - inStream->GetRem();
+      if (item->Is_Sparse() && opRes != NExtract::NOperationResult::kDataError && inStream->GetRem() != 0)
+      {
+        RINOK(copyCoder.Code(inStream, NULL, NULL, NULL))
+        _arc._phySize += copyCoder.TotalSize;
+      }
+      inputTruncated = inStream->GetRem() != 0
+          && (outStreamSpec->GetRem() != 0 || opRes != NExtract::NOperationResult::kOK);
       _latestIsRead = false;
       _curIndex++;
     }
@@ -853,6 +943,12 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     }
     }
     RINOK(extractCallback->SetOperationResult(opRes))
+    if (inputTruncated)
+    {
+      _arc._error = k_ErrorType_UnexpectedEnd;
+      _arc._phySize_Defined = true;
+      break;
+    }
   }
   return S_OK;
   COM_TRY_END
@@ -862,9 +958,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 Z7_CLASS_IMP_IInStream(
   CSparseStream
 )
-  UInt64 _phyPos;
   UInt64 _virtPos;
-  bool _needStartSeek;
 
 public:
   unsigned ItemIndex;
@@ -875,8 +969,6 @@ public:
   void Init()
   {
     _virtPos = 0;
-    _phyPos = 0;
-    _needStartSeek = true;
   }
 };
 
@@ -923,14 +1015,9 @@ Z7_COM7F_IMF(CSparseStream::Read(void *data, UInt32 size, UInt32 *processedSize)
       if (size > rem)
         size = (UInt32)rem;
       const UInt64 phyPos = PhyOffsets[left] + relat;
-      if (_needStartSeek || _phyPos != phyPos)
-      {
-        RINOK(InStream_SeekSet(Handler->_stream, item.Get_DataPos() + phyPos))
-        _needStartSeek = false;
-        _phyPos = phyPos;
-      }
+      // Other returned streams can move the shared archive input.
+      RINOK(InStream_SeekSet(Handler->_stream, item.Get_DataPos() + phyPos))
       res = Handler->_stream->Read(data, size, &size);
-      _phyPos += size;
     }
     else
     {
@@ -972,6 +1059,7 @@ Z7_COM7F_IMF(CSparseStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPos
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
   COM_TRY_BEGIN
+  *stream = NULL;
   
   const CItemEx &item = _items[index];
 
@@ -1023,6 +1111,7 @@ void CHandler::Init()
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   Init();
 
   for (UInt32 i = 0; i < numProps; i++)
@@ -1103,6 +1192,7 @@ Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVAR
     }
   }
   return S_OK;
+  COM_TRY_END
 }
 
 }}

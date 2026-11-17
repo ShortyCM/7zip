@@ -54,12 +54,6 @@ HRESULT COutBuffer::FlushPart() throw()
   #ifdef Z7_NO_EXCEPTIONS
   result = ErrorCode;
   #endif
-  if (_buf2)
-  {
-    memcpy(_buf2, _buf + _streamPos, size);
-    _buf2 += size;
-  }
-
   if (_stream
       #ifdef Z7_NO_EXCEPTIONS
       && (ErrorCode == S_OK)
@@ -68,12 +62,19 @@ HRESULT COutBuffer::FlushPart() throw()
   {
     UInt32 processedSize = 0;
     result = _stream->Write(_buf + _streamPos, size, &processedSize);
+    if (result == S_OK && size != 0 && processedSize == 0)
+      result = E_FAIL;
     size = processedSize;
+  }
+  if (_buf2)
+  {
+    memcpy(_buf2, _buf + _streamPos, size);
+    _buf2 += size;
   }
   _streamPos += size;
   if (_streamPos == _bufSize)
     _streamPos = 0;
-  if (_pos == _bufSize)
+  if (_pos == _bufSize && size != 0)
   {
     _overDict = true;
     _pos = 0;

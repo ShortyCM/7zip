@@ -5,6 +5,9 @@
 #include "EditPage.h"
 #include "EditPageRes.h"
 
+#include "../../../Windows/ErrorMsg.h"
+#include "../Explorer/MyMessages.h"
+
 #include "BrowseDialog.h"
 #include "HelpUtils.h"
 #include "LangUtils.h"
@@ -67,10 +70,12 @@ LONG CEditPage::OnApply()
     {
       UString path;
       c.Edit.GetText(path);
-      if (i < 2)
-        SaveRegEditor(i > 0, path);
-      else
-        SaveRegDiff(path);
+      const LONG result = i < 2 ? SaveRegEditor(i > 0, path) : SaveRegDiff(path);
+      if (result != ERROR_SUCCESS)
+      {
+        ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+        return PSNRET_INVALID_NOCHANGEPAGE;
+      }
       c.WasChanged = false;
     }
   }

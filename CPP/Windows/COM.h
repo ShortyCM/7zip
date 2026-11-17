@@ -12,17 +12,18 @@ namespace NCOM {
   
 class CComInitializer
 {
+  bool _initialized;
 public:
   CComInitializer()
   {
     #ifdef UNDER_CE
-    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    _initialized = SUCCEEDED(CoInitializeEx(NULL, COINIT_MULTITHREADED));
     #else
     // it's single thread. Do we need multithread?
-    CoInitialize(NULL);
+    _initialized = SUCCEEDED(CoInitialize(NULL));
     #endif
   }
-  ~CComInitializer() { CoUninitialize(); }
+  ~CComInitializer() { if (_initialized) CoUninitialize(); }
 };
 
 /*

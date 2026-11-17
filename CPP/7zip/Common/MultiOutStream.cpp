@@ -18,6 +18,7 @@
 #include "../../Windows/System.h"
 
 #include "MultiOutStream.h"
+#include "StreamUtils.h"
 
 using namespace NWindows;
 using namespace NFile;
@@ -154,6 +155,8 @@ void CMultiOutStream::Init(const CRecordVector<UInt64> &sizes)
 */
 bool CMultiOutStream::IsRestricted(const CVolStream &s) const
 {
+  if (s.RealSize == (UInt64)(Int64)-1)
+    return true;
   if (s.Start < _restrict_Global)
     return true;
   if (_restrict_Begin == _restrict_End)
@@ -306,7 +309,7 @@ HRESULT CMultiOutStream::CreateNewStream(UInt64 newSize)
   InsertToLinkedList(index);
   
   if (newSize != 0)
-    return s.SetSize2(newSize);
+    return Streams[index].SetSize2(newSize);
   return S_OK;
 }
 
@@ -384,8 +387,9 @@ HRESULT CMultiOutStream::ReOpenStream(unsigned streamIndex)
     hres = s.StreamSpec->GetSize(&realSize);
     if (hres == S_OK)
     {
-      if (realSize == s.RealSize)
+      if (s.RealSize == (UInt64)(Int64)-1 || realSize == s.RealSize)
       {
+        s.RealSize = realSize;
         PRF(printf("\n ReOpenStream OK realSize = %u\n", (unsigned)realSize))
         InsertToLinkedList(streamIndex);
         return S_OK;
@@ -447,54 +451,50 @@ HRESULT CMultiOutStream::Normalize_finalMode(bool finalMode)
   
   unsigned i = Streams.Size();
 
-  UInt64 offset = 0;
-  
   /* At first we normalize (reduce or increase) the sizes of all existing
      streams in Streams[] that can be affected by changed _length.
      And we remove tailing zero-size streams, if (finalMode == true) */
   while (i != 0)
   {
-    offset = Streams[--i].Start; // it's last item in Streams[]
+    const UInt64 offset = Streams[--i].Start;
     // we don't want to remove first volume
     if (offset < _length || i == 0)
     {
       const UInt64 volSize = GetVolSize_for_Stream(i);
-      UInt64 size = _length - offset; // (size != 0) here
+      UInt64 size = _length - offset;
       if (size > volSize)
         size = volSize;
       RINOK(OptReOpen_and_SetSize(i, size))
-      if (_length - offset <= volSize)
-        return S_OK;
-      // _length - offset > volSize
-      offset += volSize;
-      // _length > offset
-      break;
-      // UPDATE_HRES(res, OptReOpen_and_SetSize(i, size));
+      // Earlier retained volumes can also need growth after a prior truncation.
     }
-
-    /* we Set Size of stream to zero even for (finalMode==true), although
-       that stream will be deleted in next commands */
-    // UPDATE_HRES(res, OptReOpen_and_SetSize(i, 0));
-    RINOK(OptReOpen_and_SetSize(i, 0))
-    if (finalMode)
+    else
     {
-      RINOK(CloseStream_and_DeleteFile(i))
-      /* CVolStream::Stream was released above already, and it was
-         removed from linked list. So we don't need to update linked list
-         structure, when we delete last item in Streams[] */
-      Streams.DeleteBack();
-      // Delete_LastStream_Records();
+      /* we Set Size of stream to zero even for (finalMode==true), although
+         that stream will be deleted in next commands */
+      RINOK(OptReOpen_and_SetSize(i, 0))
+      if (finalMode)
+      {
+        RINOK(CloseStream_and_DeleteFile(i))
+        /* CVolStream::Stream was released above already, and it was
+           removed from linked list. So we don't need to update linked list
+           structure, when we delete last item in Streams[] */
+        Streams.DeleteBack();
+      }
     }
   }
 
   /* now we create new zero-filled streams to cover all data up to _length */
 
-  if (_length == 0)
-    return S_OK;
+  if (!Streams.IsEmpty())
+  {
+    const UInt64 start = Streams.Back().Start;
+    if (start >= _length || _length - start <= GetVolSize_for_Stream(Streams.Size() - 1))
+      return S_OK;
+  }
 
   // (offset) is start offset of next stream after existing Streams[]
-
-  for (;;)
+  UInt64 offset = GetGlobalOffset_for_NewStream();
+  while (offset < _length)
   {
     // _length > offset
     const UInt64 volSize = GetVolSize_for_Stream(Streams.Size());
@@ -508,6 +508,7 @@ HRESULT CMultiOutStream::Normalize_finalMode(bool finalMode)
     offset += volSize;
     // _length > offset
   }
+  return S_OK;
 }
 
 
@@ -662,6 +663,7 @@ Z7_COM7F_IMF(CMultiOutStream::Write(const void *data, UInt32 size, UInt32 *proce
     }
     if (_offsetPos != s.Pos)
     {
+      s.Pos = (UInt64)(Int64)-1;
       RINOK(s.Stream->Seek((Int64)_offsetPos, STREAM_SEEK_SET, NULL))
       s.Pos = _offsetPos;
     }
@@ -723,8 +725,8 @@ Z7_COM7F_IMF(CMultiOutStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newP
   switch (seekOrigin)
   {
     case STREAM_SEEK_SET: break;
-    case STREAM_SEEK_CUR: offset += _absPos; break;
-    case STREAM_SEEK_END: offset += _length; break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_absPos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset(_length, offset, offset)) break;
     default: return STG_E_INVALIDFUNCTION;
   }
   if (offset < 0)

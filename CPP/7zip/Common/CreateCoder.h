@@ -31,6 +31,7 @@
 struct CCodecInfoEx
 {
   CMethodId Id;
+  UInt32 CodecIndex;
   AString Name;
   UInt32 NumStreams;
   bool EncoderIsAssigned;
@@ -43,6 +44,7 @@ struct CCodecInfoEx
 struct CHasherInfoEx
 {
   CMethodId Id;
+  UInt32 HasherIndex;
   AString Name;
 };
 

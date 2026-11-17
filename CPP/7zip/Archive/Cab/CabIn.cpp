@@ -14,13 +14,19 @@
 #define Get16a(p) GetUi16a(p)
 #define Get32a(p) GetUi32a(p)
 
-#if 1
-#define Get16(p) GetUi16a(p)
-#define Get32(p) GetUi32a(p)
-#else
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#endif
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
 
 namespace NArchive {
 namespace NCab {
@@ -275,7 +281,7 @@ HRESULT CInArchive::Open2(CDatabaseEx &db, const UInt64 * /* searchHeaderSizeLim
       }
       else
         limitedStreamSpec->Init(ai.Size - remInFinder);
-      
+
       startInBuf = finder.Pos;
       _inBuffer.SetBuf(buffer, (UInt32)kBufSize, finder.End, finder.Pos + kMainHeaderSize);
 #endif

@@ -92,16 +92,27 @@ void CProgressBox::ReduceString(const UString &src, AString &dest)
 
   if (dest.Len() <= MaxLen)
     return;
-  unsigned len = FileName.Len();
+  unsigned len = src.Len();
   for (; len != 0;)
   {
     unsigned delta = len / 8;
     if (delta == 0)
       delta = 1;
     len -= delta;
-    _tempU = FileName;
-    _tempU.Delete(len / 2, FileName.Len() - len);
-    _tempU.Insert(len / 2, L" . ");
+    _tempU = src;
+    unsigned head = len / 2;
+    unsigned tail = _tempU.Len() - (len - head);
+    // Keep UTF-16 surrogate pairs together at both abbreviation boundaries.
+    if (head != 0 &&
+        _tempU[head - 1] >= 0xd800 && _tempU[head - 1] <= 0xdbff &&
+        _tempU[head] >= 0xdc00 && _tempU[head] <= 0xdfff)
+      --head;
+    if (tail < _tempU.Len() &&
+        _tempU[tail - 1] >= 0xd800 && _tempU[tail - 1] <= 0xdbff &&
+        _tempU[tail] >= 0xdc00 && _tempU[tail] <= 0xdfff)
+      ++tail;
+    _tempU.Delete(head, tail - head);
+    _tempU.Insert(head, L" . ");
     UnicodeStringToMultiByte2(dest, _tempU, CP_OEMCP);
     if (dest.Len() <= MaxLen)
       return;
@@ -157,7 +168,8 @@ void CProgressBox::Print()
     {
       if ((UInt32)(tick - _prevTick) < _tickStep)
         return;
-      if (_printedState.IsEqualTo((const CPercentPrinterState &)*this))
+      if (_printedState.IsEqualTo((const CPercentPrinterState &)*this)
+          && _printedUseBytesForPercents == UseBytesForPercents)
         return;
     }
   }
@@ -199,7 +211,7 @@ void CProgressBox::Print()
     {
       UInt64 val = 0;
       if (total != (UInt64)(Int64)-1 && total != 0)
-        val = cur * 100 / Total;
+        val = cur * 100 / total;
       
       ConvertUInt64ToString(val, s);
       size = (unsigned)strlen(s);
@@ -300,6 +312,7 @@ void CProgressBox::Print()
 
   _wasPrinted = true;
   _printedState = *this;
+  _printedUseBytesForPercents = UseBytesForPercents;
   _prevTick = tick;
   _prevElapsedSec = elapsedSec;
 }

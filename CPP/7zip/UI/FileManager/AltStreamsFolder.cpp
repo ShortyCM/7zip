@@ -129,12 +129,7 @@ Z7_COM7F_IMF(CAltStreamsFolder::LoadItems())
   {
     bool found;
     if (!enumerator.Next(si, found))
-    {
-      // if (GetLastError() == ERROR_ACCESS_DENIED)
-      //   break;
-      // return E_FAIL;
-      break;
-    }
+      return GetLastError_noZero_HRESULT();
     if (!found)
       break;
     if (si.IsMainStream())
@@ -244,14 +239,10 @@ Z7_COM7F_IMF2(Int32, CAltStreamsFolder::CompareItems(UInt32 index1, UInt32 index
       return MyCompare(ss1.Size, ss2.Size);
     case kpidPackSize:
     {
-      #ifdef UNDER_CE
-      return MyCompare(ss1.Size, ss2.Size);
-      #else
-      // PackSize can be undefined here
-      return MyCompare(
-          ss1.PackSize,
-          ss2.PackSize);
-      #endif
+      NCOM::CPropVariant prop1, prop2;
+      GetProperty(index1, kpidPackSize, &prop1);
+      GetProperty(index2, kpidPackSize, &prop2);
+      return prop1.Compare(prop2);
     }
     
     case kpidExtension:
@@ -382,9 +373,10 @@ Z7_COM7F_IMF(CAltStreamsFolder::WasChanged(Int32 *wasChanged))
  
 Z7_COM7F_IMF(CAltStreamsFolder::Clone(IFolderFolder **resultFolder))
 {
+  *resultFolder = NULL;
   CAltStreamsFolder *folderSpec = new CAltStreamsFolder;
   CMyComPtr<IFolderFolder> folderNew = folderSpec;
-  folderSpec->Init(_pathPrefix);
+  RINOK(folderSpec->Init(_pathPrefix))
   *resultFolder = folderNew.Detach();
   return S_OK;
 }
@@ -443,6 +435,8 @@ Z7_COM7F_IMF(CAltStreamsFolder::CreateFile(const wchar_t *name, IProgress * /* p
   NIO::COutFile outFile;
   if (!outFile.Create_NEW(absPath))
     return GetLastError_noZero_HRESULT();
+  if (!outFile.Close())
+    return GetLastError_noZero_HRESULT();
   return S_OK;
 }
 
@@ -455,20 +449,15 @@ static HRESULT UpdateFile(NFsFolder::CCopyStateIO &state, CFSTR inPath, CFSTR ou
 {
   if (NFind::DoesFileOrDirExist(outPath))
   {
-    RINOK(SendMessageError(callback, NError::MyFormatMessage(ERROR_ALREADY_EXISTS), FString(outPath)))
-    CFileInfo fi;
-    if (fi.Find(inPath))
-    {
-      if (state.TotalSize >= fi.Size)
-        state.TotalSize -= fi.Size;
-    }
-    return S_OK;
+    if (callback)
+      RINOK(SendMessageError(callback, NError::MyFormatMessage(ERROR_ALREADY_EXISTS), FString(outPath)))
+    return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
   }
 
   {
     if (callback)
       RINOK(callback->CompressOperation(fs2us(inPath)))
-    RINOK(state.MyCopyFile(inPath, outPath))
+    RINOK(state.MyCopyFile(inPath, outPath, INVALID_FILE_ATTRIBUTES, false))
     if (state.ErrorFileIndex >= 0)
     {
       if (state.ErrorMessage.IsEmpty())
@@ -480,6 +469,7 @@ static HRESULT UpdateFile(NFsFolder::CCopyStateIO &state, CFSTR inPath, CFSTR ou
         errorName = outPath;
       if (callback)
         RINOK(SendMessageError(callback, state.ErrorMessage, errorName))
+      return E_ABORT;
     }
     if (callback)
       RINOK(callback->OperationResult(0))
@@ -542,14 +532,15 @@ Z7_COM7F_IMF(CAltStreamsFolder::Rename(UInt32 index, const wchar_t *newName, IPr
   CMyComPtr<IFolderArchiveUpdateCallback> callback;
   if (progress)
   {
-    RINOK(progress->QueryInterface(IID_IFolderArchiveUpdateCallback, (void **)&callback))
+    const HRESULT res = progress->QueryInterface(IID_IFolderArchiveUpdateCallback, (void **)&callback);
+    if (res != E_NOINTERFACE)
+      RINOK(res)
   }
 
   if (callback)
-  {
     RINOK(callback->SetNumFiles(1))
-    RINOK(callback->SetTotal(ss.Size))
-  }
+  if (progress)
+    RINOK(progress->SetTotal(ss.Size))
 
   NFsFolder::CCopyStateIO state;
   state.Progress = progress;
@@ -570,7 +561,7 @@ Z7_COM7F_IMF(CAltStreamsFolder::Delete(const UInt32 *indices, UInt32 numItems,IP
     const bool result = DeleteFileAlways(fullPath);
     if (!result)
       return GetLastError_noZero_HRESULT();
-    const UInt64 completed = i;
+    const UInt64 completed = (UInt64)i + 1;
     RINOK(progress->SetCompleted(&completed))
   }
   return S_OK;
@@ -635,9 +626,10 @@ static HRESULT CopyStream(
     IFolderOperationsExtractCallback *callback)
 {
   FString destPath = destPathSpec;
-  if (CompareFileNames(destPath, srcPath) == 0)
+  if (NFsFolder::AreFilePathsEqual(srcPath, destPath))
   {
-    RINOK(SendMessageError(callback, "Cannot copy file onto itself", destPath))
+    RINOK(SendMessageError(callback, state.DeleteSrcFile ?
+        "Cannot move file onto itself" : "Cannot copy file onto itself", destPath))
     return E_ABORT;
   }
 

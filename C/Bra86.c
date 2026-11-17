@@ -3,8 +3,24 @@
 
 #include "Precomp.h"
 
+#include <string.h>
+
 #include "Bra.h"
 #include "CpuArch.h"
+
+static Z7_FORCE_INLINE UInt32 Bra86_GetUi32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE void Bra86_SetUi32(Byte *p, UInt32 value)
+{
+  UInt32 encoded;
+  SetUi32(&encoded, value)
+  memcpy(p, &encoded, sizeof(encoded));
+}
 
 
 #if defined(MY_CPU_SIZEOF_POINTER) \
@@ -31,7 +47,7 @@
 #define BR86_NEED_CONV_FOR_MS_BYTE(b) ((((b) + 1) & 0xfe) == 0)
 
 #ifdef MY_CPU_LE_UNALIGN
-  #define BR86_PREPARE_BCJ_SCAN  const UInt32 v = GetUi32(p) ^ 0xe8e8e8e8;
+  #define BR86_PREPARE_BCJ_SCAN  const UInt32 v = Bra86_GetUi32(p) ^ 0xe8e8e8e8;
   #define BR86_IS_BCJ_BYTE(n)    ((v & ((UInt32)0xfe << (n) * 8)) == 0)
 #else
   #define BR86_PREPARE_BCJ_SCAN
@@ -98,7 +114,7 @@ Byte *Z7_BRANCH_CONV_ST(X86)(Byte *p, SizeT size, UInt32 pc, UInt32 *state, int 
       continue; // goto cont;
     // if (!BR86_NEED_CONV_FOR_MS_BYTE(p[3])) continue; // goto cont;
     {
-      UInt32 v = GetUi32(p);
+      UInt32 v = Bra86_GetUi32(p);
       UInt32 c;
       v += (1 << 24);  if (v & 0xfe000000) continue; // goto cont;
       c = BR_PC_GET;
@@ -118,7 +134,7 @@ Byte *Z7_BRANCH_CONV_ST(X86)(Byte *p, SizeT size, UInt32 pc, UInt32 *state, int 
       }
       // v = (v & ((1 << 24) - 1)) - (v & (1 << 24));
       v &= (1 << 25) - 1;  v -= (1 << 24);
-      SetUi32(p, v)
+      Bra86_SetUi32(p, v);
       p += 4;
       goto main_loop;
     }
@@ -146,14 +162,14 @@ Byte *Z7_BRANCH_CONV_ST(X86)(Byte *p, SizeT size, UInt32 pc, UInt32 *state, int 
       goto fin_p;
     // if (!BR86_NEED_CONV_FOR_MS_BYTE(p[3])) continue; // goto cont;
     {
-      UInt32 v = GetUi32(p);
+      UInt32 v = Bra86_GetUi32(p);
       UInt32 c;
       v += (1 << 24);  if (v & 0xfe000000) continue; // goto cont;
       c = BR_PC_GET;
       BR_CONVERT_VAL(v, c)
       // v = (v & ((1 << 24) - 1)) - (v & (1 << 24));
       v &= (1 << 25) - 1;  v -= (1 << 24);
-      SetUi32(p, v)
+      Bra86_SetUi32(p, v);
       p += 4;
       goto main_loop;
     }

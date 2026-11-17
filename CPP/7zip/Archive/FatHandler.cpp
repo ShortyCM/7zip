@@ -23,8 +23,18 @@
 
 #include "Common/ItemNameUtils.h"
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
 #define Get16a(p) GetUi16a(p)
 #define Get32a(p) GetUi32a(p)
 
@@ -90,7 +100,7 @@ struct CHeader
   UInt32 GetFatSector() const
   {
     UInt32 index = (IsFat32() && (Flags & 0x80) != 0) ? (Flags & 0xF) : 0;
-    if (index > NumFats)
+    if (index >= NumFats)
       index = 0;
     return NumReservedSectors + index * NumFatSectors;
   }
@@ -811,15 +821,23 @@ HRESULT CDatabase::Open()
 
     if (Header.IsFat32())
     {
-      if (((UInt32)Header.FsInfoSector << Header.SectorSizeLog) + kHeaderSize <= fileSize
-          && SeekToSector(Header.FsInfoSector) == S_OK
-          && ReadStream_FALSE(InStream, buf32, kHeaderSize) == S_OK
-          && 0xaa550000 == Get32a(buf32 + 508 / 4)
-          && 0x41615252 == Get32a(buf32)
-          && 0x61417272 == Get32a(buf32 + 484 / 4))
+      bool infoOK = false;
+      if (((UInt32)Header.FsInfoSector << Header.SectorSizeLog) + kHeaderSize <= fileSize)
+      {
+        HRESULT res = SeekToSector(Header.FsInfoSector);
+        if (res == S_OK)
+          res = ReadStream_FALSE(InStream, buf32, kHeaderSize);
+        if (res != S_OK && res != S_FALSE)
+          return res;
+        infoOK = res == S_OK
+            && 0xaa550000 == Get32a(buf32 + 508 / 4)
+            && 0x41615252 == Get32a(buf32)
+            && 0x61417272 == Get32a(buf32 + 484 / 4);
+      }
+      if (infoOK)
       {
         NumFreeClusters = Get32a(buf32 + 488 / 4);
-        numFreeClusters_Defined = (NumFreeClusters <= Header.FatSize);
+        numFreeClusters_Defined = (NumFreeClusters <= Header.FatSize - 2);
       }
       else
         Header.HeadersWarning = true;
@@ -929,11 +947,20 @@ Z7_class_CHandler_final:
   CDatabase
 {
   Z7_IFACES_IMP_UNK_3(IInArchive, IArchiveGetRawProps, IInArchiveGetStream)
+
+  HRESULT GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &seekResult);
 };
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  HRESULT seekResult = S_OK;
+  return GetStream2(index, stream, seekResult);
+}
+
+HRESULT CHandler::GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &seekResult)
+{
   COM_TRY_BEGIN
+  seekResult = S_OK;
   *stream = NULL;
   const CItem &item = Items[index];
   CClusterInStream *streamSpec = new CClusterInStream;
@@ -968,7 +995,8 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
     if (!Header.IsEocAndUnused(cluster))
       return S_FALSE;
   }
-  RINOK(streamSpec->InitAndSeek())
+  seekResult = streamSpec->InitAndSeek();
+  RINOK(seekResult)
   *stream = streamTemp.Detach();
   return S_OK;
   COM_TRY_END
@@ -1290,7 +1318,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       RINOK(extractCallback->PrepareOperation(askMode))
       res = NExtract::NOperationResult::kDataError;
       CMyComPtr<ISequentialInStream> inStream;
-      const HRESULT hres = GetStream(index, &inStream);
+      HRESULT seekResult = S_OK;
+      const HRESULT hres = GetStream2(index, &inStream, seekResult);
+      RINOK(seekResult)
       if (hres != S_FALSE)
       {
         RINOK(hres)

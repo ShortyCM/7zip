@@ -5,6 +5,8 @@
 #include "DynLimBuf.h"
 #include "MyString.h"
 
+#include <functional>
+
 CDynLimBuf::CDynLimBuf(size_t limit) throw()
 {
   _chars = NULL;
@@ -35,8 +37,9 @@ CDynLimBuf & CDynLimBuf::operator+=(char c) throw()
       _error = true;
       return *this;
     }
-    if (n > _size)
-      n = _size;
+    const size_t growSize = _size != 0 ? _size : (size_t)1 << 4;
+    if (n > growSize)
+      n = growSize;
 
     n += _pos;
 
@@ -46,7 +49,8 @@ CDynLimBuf & CDynLimBuf::operator+=(char c) throw()
       _error = true;
       return *this;
     }
-    memcpy(newBuf, _chars, _pos);
+    if (_pos != 0)
+      memcpy(newBuf, _chars, _pos);
     MyFree(_chars);
     _chars = newBuf;
     _size = n;
@@ -66,6 +70,8 @@ CDynLimBuf &CDynLimBuf::operator+=(const char *s) throw()
     len = (unsigned)rem;
     _error = true;
   }
+  if (len == 0)
+    return *this;
   if (_size - _pos < len)
   {
     size_t n = _pos + len;
@@ -82,7 +88,12 @@ CDynLimBuf &CDynLimBuf::operator+=(const char *s) throw()
       _error = true;
       return *this;
     }
-    memcpy(newBuf, _chars, _pos);
+    if (_pos != 0)
+      memcpy(newBuf, _chars, _pos);
+    const char *oldChars = (const char *)_chars;
+    const std::less<const char *> less;
+    if (_chars && !less(s, oldChars) && less(s, oldChars + _pos))
+      s = (const char *)newBuf + (s - oldChars);
     MyFree(_chars);
     _chars = newBuf;
     _size = n;

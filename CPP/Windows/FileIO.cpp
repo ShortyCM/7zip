@@ -778,7 +778,8 @@ bool CFileBase::OpenBinary(const char *name, int flags, mode_t mode)
   flags |= O_BINARY;
   #endif
 
-  Close();
+  if (!Close())
+    return false;
   /*
     The mode argument specifies the file mode bits to be
     applied when a new file is created. If neither O_CREAT nor
@@ -828,6 +829,12 @@ bool CFileBase::Close()
 {
   if (_handle == -1)
     return true;
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+  // These systems release the descriptor even when close() reports an error.
+  const int handle = _handle;
+  _handle = -1;
+  return close(handle) == 0;
+#else
   if (close(_handle) != 0)
     return false;
   _handle = -1;
@@ -836,6 +843,7 @@ bool CFileBase::Close()
   SizeDefined = false;
   */
   return true;
+#endif
 }
 
 bool CFileBase::GetLength(UInt64 &length) const
@@ -846,7 +854,15 @@ bool CFileBase::GetLength(UInt64 &length) const
   if (curPos == -1)
     return false;
   const off_t lengthTemp = seek(0, SEEK_END);
-  seek(curPos, SEEK_SET);
+  if (lengthTemp == -1)
+  {
+    const int error = errno;
+    seek(curPos, SEEK_SET);
+    errno = error;
+    return false;
+  }
+  if (seek(curPos, SEEK_SET) == -1)
+    return false;
   length = (UInt64)lengthTemp;
 
   /*
@@ -945,7 +961,13 @@ ssize_t CInFile::read_part(void *data, size_t size) throw()
 {
   if (size > kChunkSizeMax)
     size = kChunkSizeMax;
-  return ::read(_handle, data, size);
+  ssize_t res;
+  do
+  {
+    res = ::read(_handle, data, size);
+  }
+  while (res < 0 && errno == EINTR);
+  return res;
 }
 
 bool CInFile::ReadFull(void *data, size_t size, size_t &processed) throw()
@@ -1032,7 +1054,13 @@ ssize_t COutFile::write_part(const void *data, size_t size) throw()
 {
   if (size > kChunkSizeMax)
     size = kChunkSizeMax;
-  return ::write(_handle, data, size);
+  ssize_t res;
+  do
+  {
+    res = ::write(_handle, data, size);
+  }
+  while (res < 0 && errno == EINTR);
+  return res;
 }
 
 ssize_t COutFile::write_full(const void *data, size_t size, size_t &processed) throw()

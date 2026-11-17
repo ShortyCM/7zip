@@ -521,6 +521,13 @@ So we can force to "pinsrd" always.
 #endif // USE_SSE41
 // #endif
 
+static Z7_FORCE_INLINE Int32 Blake2s_Load32(const void *data)
+{
+  Int32 value;
+  memcpy(&value, data, sizeof(value));
+  return value;
+}
+
 #ifdef Z7_BLAKE2S_USE_INSERT_INSTRUCTION
   // for SSE4.1
 #define MM_LOAD_EPI32_FROM_4_POINTERS(p0, p1, p2, p3)  \
@@ -528,10 +535,10 @@ So we can force to "pinsrd" always.
     _mm_insert_epi32( \
     _mm_insert_epi32( \
     _mm_cvtsi32_si128( \
-        *(const Int32 *)p0), \
-        *(const Int32 *)p1, 1), \
-        *(const Int32 *)p2, 2), \
-        *(const Int32 *)p3, 3)
+        Blake2s_Load32(p0)), \
+        Blake2s_Load32(p1), 1), \
+        Blake2s_Load32(p2), 2), \
+        Blake2s_Load32(p3), 3)
 #elif 0 || 1 && defined(Z7_MSC_VER_ORIGINAL)
 /* MSVC 1400 implements _mm_set_epi32() via slow memory write/read.
    Also _mm_unpacklo_epi32 is more effective for another MSVC compilers.
@@ -539,17 +546,17 @@ So we can force to "pinsrd" always.
    So we use _mm_unpacklo_epi32 for MSVC only */
 #define MM_LOAD_EPI32_FROM_4_POINTERS(p0, p1, p2, p3)  \
     _mm_unpacklo_epi64(  \
-        _mm_unpacklo_epi32( _mm_cvtsi32_si128(*(const Int32 *)p0),  \
-                            _mm_cvtsi32_si128(*(const Int32 *)p1)), \
-        _mm_unpacklo_epi32( _mm_cvtsi32_si128(*(const Int32 *)p2),  \
-                            _mm_cvtsi32_si128(*(const Int32 *)p3)))
+        _mm_unpacklo_epi32( _mm_cvtsi32_si128(Blake2s_Load32(p0)),  \
+                            _mm_cvtsi32_si128(Blake2s_Load32(p1))), \
+        _mm_unpacklo_epi32( _mm_cvtsi32_si128(Blake2s_Load32(p2)),  \
+                            _mm_cvtsi32_si128(Blake2s_Load32(p3))))
 #else
 #define MM_LOAD_EPI32_FROM_4_POINTERS(p0, p1, p2, p3)  \
     _mm_set_epi32( \
-        *(const Int32 *)p3, \
-        *(const Int32 *)p2, \
-        *(const Int32 *)p1, \
-        *(const Int32 *)p0)
+        Blake2s_Load32(p3), \
+        Blake2s_Load32(p2), \
+        Blake2s_Load32(p1), \
+        Blake2s_Load32(p0))
 #endif
 
 #define SET_ROW_FROM_SIGMA_BASE(input, i0, i1, i2, i3)  \
@@ -727,14 +734,14 @@ Blake2sp_Compress2_V128_Way1(UInt32 *s_items, const Byte *data, const Byte *end)
 */
 #define AXR2_W_PRE_INSERT(sigma_index, i) \
   { const unsigned ii = sigma[(sigma_index) + i * 2]; \
-    t0 = _mm_insert_epi32(t0, *(const Int32 *)GET_SIGMA_PTR(data, ii),                      i); \
-    t1 = _mm_insert_epi32(t1, *(const Int32 *)GET_SIGMA_PTR(data, Z7_BLAKE2S_BLOCK_SIZE + ii), i); \
+    t0 = _mm_insert_epi32(t0, Blake2s_Load32(GET_SIGMA_PTR(data, ii)),                      i); \
+    t1 = _mm_insert_epi32(t1, Blake2s_Load32(GET_SIGMA_PTR(data, Z7_BLAKE2S_BLOCK_SIZE + ii)), i); \
   }
 #define AXR2_W(sigma_index, shift1, shift2) \
   { __m128i t0, t1; \
     { const unsigned ii = sigma[sigma_index]; \
-      t0 = _mm_cvtsi32_si128(*(const Int32 *)GET_SIGMA_PTR(data, ii)); \
-      t1 = _mm_cvtsi32_si128(*(const Int32 *)GET_SIGMA_PTR(data, Z7_BLAKE2S_BLOCK_SIZE + ii)); \
+      t0 = _mm_cvtsi32_si128(Blake2s_Load32(GET_SIGMA_PTR(data, ii))); \
+      t1 = _mm_cvtsi32_si128(Blake2s_Load32(GET_SIGMA_PTR(data, Z7_BLAKE2S_BLOCK_SIZE + ii))); \
     } \
     AXR2_W_PRE_INSERT(sigma_index, 1) \
     AXR2_W_PRE_INSERT(sigma_index, 2) \
@@ -1892,10 +1899,11 @@ Blake2s_Compress(UInt32 *s, const Byte *input)
 {
   UInt32 m[16];
   UInt32 v[16];
+  memcpy(m, input, sizeof(m));
   {
     unsigned i;
     for (i = 0; i < 16; i++)
-      m[i] = GetUi32(input + i * 4);
+      m[i] = GetUi32(m + i);
   }
 
 #define INIT_v_FROM_s(i)  v[i] = s[i];
@@ -2488,7 +2496,8 @@ BoolInt Blake2sp_SetFunction(CBlake2sp *p, unsigned algo)
     }
     else
     {
-      if ((g_z7_Blake2sp_SupportedFlags & (1u << algo)) == 0)
+      if (algo >= sizeof(g_z7_Blake2sp_SupportedFlags) * 8
+          || (g_z7_Blake2sp_SupportedFlags & (1u << algo)) == 0)
         return False;
 
 #ifdef Z7_BLAKE2S_USE_AVX2

@@ -17,6 +17,10 @@ namespace NZ {
 HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
     ICompressProgressInfo *progress) throw();
 
+// callbackResult distinguishes stream/progress failures from data errors.
+HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
+    ICompressProgressInfo *progress, HRESULT &callbackResult) throw();
+
 /*
 CheckStream() function:
 in:

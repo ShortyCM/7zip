@@ -33,7 +33,8 @@ Z7_COM7F_IMF2(void, CXzCrc64Hasher::Update(const void *data, UInt32 size))
 Z7_COM7F_IMF2(void, CXzCrc64Hasher::Final(Byte *digest))
 {
   const UInt64 val = CRC64_GET_DIGEST(_crc);
-  SetUi64(digest, val)
+  for (unsigned i = 0; i < 8; i++)
+    digest[i] = (Byte)(val >> (i * 8));
 }
 
 REGISTER_HASHER(CXzCrc64Hasher, 0x4, "CRC64", 8)

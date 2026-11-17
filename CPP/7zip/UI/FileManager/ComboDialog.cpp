@@ -4,6 +4,9 @@
 #include "ComboDialog.h"
 
 #include "../../../Windows/Control/Static.h"
+#include "../../../Windows/ErrorMsg.h"
+
+#include "../Explorer/MyMessages.h"
 
 #ifdef Z7_LANG
 #include "LangUtils.h"
@@ -59,6 +62,13 @@ bool CComboDialog::OnSize(WPARAM /* wParam */, int xSize, int ySize)
 
 void CComboDialog::OnOK()
 {
-  _comboBox.GetText(Value);
+  UString value;
+  if (!_comboBox.GetText(value))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
+  Value = value;
   CModalDialog::OnOK();
 }

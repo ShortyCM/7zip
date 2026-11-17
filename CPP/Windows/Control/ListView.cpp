@@ -34,7 +34,8 @@ bool CListView::GetItemParam(unsigned index, LPARAM &param) const
   item.iSubItem = 0;
   item.mask = LVIF_PARAM;
   const bool res = GetItem(&item);
-  param = item.lParam;
+  if (res)
+    param = item.lParam;
   return res;
 }
 

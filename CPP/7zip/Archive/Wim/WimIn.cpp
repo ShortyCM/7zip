@@ -30,7 +30,20 @@
 
 #define Get16(p) GetUi16a(p)  // aligned
 #define Get32(p) GetUi32a(p)  // aligned
-#define Get64(p) GetUi64(p)   // unaligned
+
+static Z7_FORCE_INLINE UInt32 Get32Unaligned(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 #if defined(Z7_MSC_VER_ORIGINAL)
 #define PRINT_UI64(val)  PRF(printf(" %9I64x", (UInt64)(val)));
@@ -1189,7 +1202,7 @@ HRESULT CDatabase::Open(IInStream *inStream, const CHeader &h, unsigned numItems
         p += kStreamInfoSize;
       }
       // (p) is aligned for 2-bytes
-      s.RefCount = GetUi32(p - kHashSize - 4); // it's unaligned for (!h.IsOldVersion())
+      s.RefCount = Get32Unaligned(p - kHashSize - 4); // it's unaligned for (!h.IsOldVersion())
       memcpy(s.Hash, p - kHashSize, kHashSize);
       
       PRF(printf("\n"));
@@ -1960,8 +1973,20 @@ HRESULT CDatabase::ExtractReparseStreams(const CObjectVector<CVolume> &volumes, 
 
 
 
-static bool ParseNumber64(const AString &s, UInt64 &res)
+static bool ParseNumber64(AString s, UInt64 &res, bool trimLeft = false)
 {
+  z7_xml_DecodeString(s);
+  if (trimLeft)
+  {
+    unsigned pos = 0;
+    for (; pos < s.Len(); ++pos)
+    {
+      const char c = s[pos];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+        break;
+    }
+    s.DeleteFrontal(pos);
+  }
   const char *end;
   if (s.IsPrefixedBy("0x"))
   {
@@ -1979,10 +2004,10 @@ static bool ParseNumber64(const AString &s, UInt64 &res)
 }
 
 
-static bool ParseNumber32(const AString &s, UInt32 &res)
+static bool ParseNumber32(const AString &s, UInt32 &res, bool trimLeft = false)
 {
   UInt64 res64;
-  if (!ParseNumber64(s, res64) || res64 >= ((UInt64)1 << 32))
+  if (!ParseNumber64(s, res64, trimLeft) || res64 >= ((UInt64)1 << 32))
     return false;
   res = (UInt32)res64;
   return true;
@@ -1995,8 +2020,8 @@ static bool ParseTime(const CXmlItem &item, FILETIME &ft, const char *tag)
   if (timeItem)
   {
     UInt32 low = 0, high = 0;
-    if (ParseNumber32(timeItem->GetSubStringForTag("LOWPART"), low) &&
-        ParseNumber32(timeItem->GetSubStringForTag("HIGHPART"), high))
+    if (ParseNumber32(timeItem->GetSubStringForTag("LOWPART"), low, true) &&
+        ParseNumber32(timeItem->GetSubStringForTag("HIGHPART"), high, true))
     {
       ft.dwLowDateTime = low;
       ft.dwHighDateTime = high;
@@ -2012,10 +2037,14 @@ void CImageInfo::Parse(const CXmlItem &item)
   CTimeDefined = ParseTime(item, CTime, "CREATIONTIME");
   MTimeDefined = ParseTime(item, MTime, "LASTMODIFICATIONTIME");
   NameDefined = true;
-  ConvertUTF8ToUnicode(item.GetSubStringForTag("NAME"), Name);
+  AString name (item.GetSubStringForTag("NAME"));
+  z7_xml_DecodeString(name);
+  ConvertUTF8ToUnicode(name, Name);
 
-  ParseNumber64(item.GetSubStringForTag("DIRCOUNT"), DirCount);
-  ParseNumber64(item.GetSubStringForTag("FILECOUNT"), FileCount);
+  if (!ParseNumber64(item.GetSubStringForTag("DIRCOUNT"), DirCount, true))
+    DirCount = 0;
+  if (!ParseNumber64(item.GetSubStringForTag("FILECOUNT"), FileCount, true))
+    FileCount = 0;
   IndexDefined = ParseNumber32(item.GetPropVal("INDEX"), Index);
 }
 

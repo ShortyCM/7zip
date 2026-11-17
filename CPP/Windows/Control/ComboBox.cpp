@@ -23,7 +23,7 @@ LRESULT CComboBox::GetLBText(int index, CSysString &s)
     return len;
   LRESULT len2 = GetLBText(index, s.GetBuf((unsigned)len));
   if (len2 == CB_ERR)
-    return len;
+    return len2;
   if (len > len2)
     len = len2;
   s.ReleaseBuf_CalcLen((unsigned)len);
@@ -48,7 +48,7 @@ LRESULT CComboBox::GetLBText(int index, UString &s)
       return len;
     LRESULT len2 = SendMsgW(CB_GETLBTEXT, MY_int_TO_WPARAM(index), (LPARAM)s.GetBuf((unsigned)len));
     if (len2 == CB_ERR)
-      return len;
+      return len2;
     if (len > len2)
       len = len2;
     s.ReleaseBuf_CalcLen((unsigned)len);

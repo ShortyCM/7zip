@@ -51,9 +51,24 @@
 #endif
 
 
-#define Get16(p) GetBe16(p)
-#define Get32(p) GetBe32(p)
-#define Get64(p) GetBe64(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe16(&value);
+}
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe32(&value);
+}
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe64(&value);
+}
 
 #define Get32a(p) GetBe32a(p)
 #define Get64a(p) GetBe64a(p)
@@ -784,7 +799,14 @@ static const CXmlItem *FindKeyPair(const CXmlItem &item, const char *key, const 
   for (unsigned i = 0; i + 1 < item.SubItems.Size(); i++)
   {
     const CXmlItem &si = item.SubItems[i];
-    if (si.IsTagged("key") && si.GetSubString().IsEqualTo(key))
+    if (!si.IsTagged("key"))
+      continue;
+    AString keyName (si.GetSubString());
+    z7_xml_DecodeString(keyName);
+    const char *p = keyName;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+      ++p;
+    if (strcmp(p, key) == 0)
     {
       const CXmlItem *si_1 = &item.SubItems[i + 1];
       if (si_1->IsTagged(nextTag))
@@ -1019,9 +1041,12 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *openArchiveCall
       if (xmlPair2.Len > len)
         xmlPair2.Len = len;
       CByteBuffer buf2;
-      if (xmlPair2.Len < len
-        || ReadData(stream, xmlPair2, buf2) != S_OK
-        || memcmp(buf2, sz, len) != 0)
+      HRESULT readRes = S_FALSE;
+      if (xmlPair2.Len >= len)
+        readRes = ReadData(stream, xmlPair2, buf2);
+      if (readRes != S_OK && readRes != S_FALSE)
+        return readRes;
+      if (readRes != S_OK || memcmp(buf2, sz, len) != 0)
       {
         // if absolute offset is not OK, probably it's archive with offset
         _startPos = headerPos - top;
@@ -1278,6 +1303,13 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *openArchiveCall
         const AString *dataString = GetStringFromKeyPair(item, "Data", "data");
         if (!dataString)
           return S_FALSE;
+        AString decodedData;
+        if (dataString->Find('&') >= 0)
+        {
+          decodedData = *dataString;
+          z7_xml_DecodeString(decodedData);
+          dataString = &decodedData;
+        }
         destLen = dataString->Len() / 4 * 3 + 4;
         rawBuf.Alloc(destLen);
         {
@@ -1295,15 +1327,14 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *openArchiveCall
       }
       CFile &file = _files.AddNew();
       {
-        /* xml code removes front space for such string:
-             <string> (Apple_Free : 3)</string>
-           maybe we shoud fix xml code and return full string with space.
-        */
         const AString *name = GetStringFromKeyPair(item, "Name", "string");
         if (!name || name->IsEmpty())
           name = GetStringFromKeyPair(item, "CFName", "string");
         if (name)
+        {
           file.Name = *name;
+          z7_xml_DecodeString(file.Name);
+        }
       }
       /*
       {
@@ -1625,19 +1656,8 @@ class CAdcDecoder
   CLzOutWindow m_OutWindowStream;
   CInBuffer m_InStream;
 
-  class CCoderReleaser Z7_final
-  {
-    CAdcDecoder *m_Coder;
-  public:
-    bool NeedFlush;
-    CCoderReleaser(CAdcDecoder *coder Z7_lifetimebound): m_Coder(coder), NeedFlush(true) {}
-    ~CCoderReleaser()
-    {
-      if (NeedFlush)
-        m_Coder->m_OutWindowStream.Flush();
-    }
-  };
-  friend class CCoderReleaser;
+  HRESULT Decode(const UInt64 *inSize, const UInt64 *outSizePtr,
+    ICompressProgressInfo *progress);
 
 public:
   HRESULT Code(ISequentialInStream * const inStream,
@@ -1648,26 +1668,9 @@ public:
 };
 
 
-HRESULT CAdcDecoder::Code(ISequentialInStream * const inStream,
-    ISequentialOutStream *outStream,
-    const UInt64 * const inSize,
-    const UInt64 * const outSizePtr,
-    ICompressProgressInfo * const progress)
+HRESULT CAdcDecoder::Decode(const UInt64 *inSize, const UInt64 *outSizePtr,
+    ICompressProgressInfo *progress)
 {
-  try {
-
-  if (!m_OutWindowStream.Create(1 << 18)) // at least (1 << 16) is required here
-    return E_OUTOFMEMORY;
-  if (!m_InStream.Create(1 << 18))
-    return E_OUTOFMEMORY;
-
-  m_OutWindowStream.SetStream(outStream);
-  m_OutWindowStream.Init(false);
-  m_InStream.SetStream(inStream);
-  m_InStream.Init();
-  
-  CCoderReleaser coderReleaser(this);
-
   const UInt32 kStep = 1 << 22;
   UInt64 nextLimit = kStep;
   const UInt64 outSize = *outSizePtr;
@@ -1730,13 +1733,37 @@ HRESULT CAdcDecoder::Code(ISequentialInStream * const inStream,
   }
   if (*inSize != m_InStream.GetProcessedSize())
     return S_FALSE;
-  coderReleaser.NeedFlush = false;
-  return m_OutWindowStream.Flush();
+  return S_OK;
+}
 
+
+HRESULT CAdcDecoder::Code(ISequentialInStream * const inStream,
+    ISequentialOutStream *outStream,
+    const UInt64 * const inSize,
+    const UInt64 * const outSizePtr,
+    ICompressProgressInfo * const progress)
+{
+  if (!m_OutWindowStream.Create(1 << 18)) // at least (1 << 16) is required here
+    return E_OUTOFMEMORY;
+  if (!m_InStream.Create(1 << 18))
+    return E_OUTOFMEMORY;
+
+  m_OutWindowStream.SetStream(outStream);
+  m_OutWindowStream.Init(false);
+  m_InStream.SetStream(inStream);
+  m_InStream.Init();
+
+  HRESULT result;
+  try
+  {
+    result = Decode(inSize, outSizePtr, progress);
   }
-  catch(const CInBufferException &e) { return e.ErrorCode; }
   catch(const CLzOutWindowException &e) { return e.ErrorCode; }
-  catch(...) { return S_FALSE; }
+  catch(const CInBufferException &e) { result = e.ErrorCode; }
+  catch(...) { result = S_FALSE; }
+
+  RINOK(m_OutWindowStream.Flush())
+  return result;
 }
 
 
@@ -1790,6 +1817,52 @@ HRESULT CDecoders::Code(ISequentialInStream *inStream, ISequentialOutStream *out
 }
 
 
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -1826,6 +1899,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   NCompress::CCopyCoderBase copyCoder;
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
   lps->Init(extractCallback, false);
+  CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> decoderProgress;
+  decoderProgress->Progress = lps;
   CMyComPtr2_Create<ISequentialInStream, CLimitedSequentialInStream> inStream;
   inStream->SetStream(_inStream);
 
@@ -1881,8 +1956,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         opRes = NExtract::NOperationResult::kHeadersError;
       else
       {
+        CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+        outCallbackStream->Stream = realOutStream;
         CMyComPtr2_Create<ISequentialOutStream, COutStreamWithCRC> outCrcStream;
-        outCrcStream->SetStream(realOutStream);
+        outCrcStream->SetStream(outCallbackStream);
         // realOutStream.Release();
         const bool needCrc = item.Checksum.IsCrc32();
         outCrcStream->Init(needCrc);
@@ -1932,11 +2009,13 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
             if (unpSize != block.PackSize)
               opRes = NExtract::NOperationResult::kUnsupportedMethod;
             else
-              res = copyCoder.Code(inStream, outStream, NULL, lps);
+              res = copyCoder.Code(inStream, outStream, NULL, decoderProgress);
           }
           else
-            res = decoders.Code(inStream, outStream, block, &unpSize, lps);
+            res = decoders.Code(inStream, outStream, block, &unpSize, decoderProgress);
 
+          RINOK(outCallbackStream->Result)
+          RINOK(decoderProgress->Result)
           if (res != S_OK)
           {
             if (res != S_FALSE)
@@ -2025,6 +2104,7 @@ Z7_CLASS_IMP_IInStream(
 
 public:
   CMyComPtr<IInStream> Stream;
+  CMyComPtr<IInArchive> ArchiveRef;
   const CFile *File;
   UInt64 Size;
 private:
@@ -2083,13 +2163,12 @@ Z7_COM7F_IMF(CInStream::Read(void *data, UInt32 size, UInt32 *processedSize))
   // COM_TRY_BEGIN
   try {
 
-  if (_errorMode)
-    return E_OUTOFMEMORY;
-
   if (processedSize)
     *processedSize = 0;
   if (size == 0)
     return S_OK;
+  if (_errorMode)
+    return E_OUTOFMEMORY;
   if (_virtPos >= Size)
     return S_OK; // (Size == _virtPos) ? S_OK: E_FAIL;
   {
@@ -2282,6 +2361,7 @@ Z7_COM7F_IMF(CInStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPositio
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
   COM_TRY_BEGIN
+  *stream = NULL;
   
 #ifdef DMG_SHOW_RAW
   if (index >= _files.Size())
@@ -2326,6 +2406,7 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
   spec->Size = spec->File->Size;
   // RINOK(
   spec->Init(_startPos + _dataForkPair.Offset);
+  spec->ArchiveRef = this;
   *stream = spec.Detach();
   return S_OK;
   

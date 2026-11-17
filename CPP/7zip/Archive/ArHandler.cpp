@@ -107,7 +107,7 @@ struct CItem
 {
   AString Name;
   UInt64 Size;
-  UInt32 MTime;
+  UInt64 MTime;
   UInt32 User;
   UInt32 Group;
   UInt32 Mode;
@@ -132,9 +132,10 @@ public:
   
   HRESULT GetNextItem(CItem &itemInfo, bool &filled);
   HRESULT Open(IInStream *inStream);
-  HRESULT SkipData(UInt64 dataSize)
+  HRESULT SkipData(UInt64 dataSize, UInt64 headerSize)
   {
-    return m_Stream->Seek((Int64)(dataSize + (dataSize & 1)), STREAM_SEEK_CUR, &Position);
+    // BSD extended names are part of the member size used for alignment.
+    return m_Stream->Seek((Int64)(dataSize + ((headerSize + dataSize) & 1)), STREAM_SEEK_CUR, &Position);
   }
 };
 
@@ -245,7 +246,7 @@ HRESULT CInArchive::GetNextItem(CItem &item, bool &filled)
   }
   cur += kNameSize;
 
-  RIF(DecimalToNumber32(cur, kTimeSize, item.MTime)) cur += kTimeSize;
+  RIF(DecimalToNumber(cur, kTimeSize, item.MTime)) cur += kTimeSize;
   RIF(DecimalToNumber32(cur, kUserSize, item.User)) cur += kUserSize;
   RIF(DecimalToNumber32(cur, kUserSize, item.Group)) cur += kUserSize;
   RIF(OctalToNumber32(cur, kModeSize, item.Mode)) cur += kModeSize;
@@ -581,7 +582,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream,
       if (!filled)
         break;
       _items.Add(item);
-      arc.SkipData(item.Size);
+      RINOK(arc.SkipData(item.Size, item.HeaderSize))
       if (callback && (_items.Size() & 0xFF) == 0)
       {
         const UInt64 numFiles = _items.Size();
@@ -727,7 +728,11 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
     case kpidMTime:
     {
       if (item.MTime != 0)
-        PropVariant_SetFrom_UnixTime(prop, item.MTime);
+      {
+        FILETIME ft;
+        if (UnixTime64_To_FileTime((Int64)item.MTime, ft))
+          prop.SetAsTimeFrom_FT_Prec(ft, k_PropVar_TimePrec_Unix);
+      }
       break;
     }
     case kpidUserId: if (item.User != 0) prop = item.User; break;

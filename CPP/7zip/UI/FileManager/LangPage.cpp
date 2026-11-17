@@ -6,6 +6,9 @@
 
 #include "../../../Windows/FileFind.h"
 #include "../../../Windows/ResourceString.h"
+#include "../../../Windows/ErrorMsg.h"
+
+#include "../Explorer/MyMessages.h"
 
 #include "HelpUtils.h"
 #include "LangPage.h"
@@ -270,7 +273,14 @@ LONG CLangPage::OnApply()
   {
     const int pathIndex = (int)_langCombo.GetItemData_of_CurSel();
     if ((unsigned)pathIndex < _langs.Size())
-      SaveRegLang(_langs[pathIndex].Name);
+    {
+      const LONG result = SaveRegLang(_langs[pathIndex].Name);
+      if (result != ERROR_SUCCESS)
+      {
+        ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+        return PSNRET_INVALID_NOCHANGEPAGE;
+      }
+    }
   }
   _needSave = false;
   #ifdef Z7_LANG

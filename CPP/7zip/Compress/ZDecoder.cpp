@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 // #include <stdio.h>
 
 #include "../../../C/Alloc.h"
@@ -12,8 +14,14 @@
 #include "ZDecoder.h"
 
 #ifdef MY_CPU_LE_UNALIGN
-#define GetUi24or32(p)      (*(const UInt32 *)(const void *)(p))
-#define GetUi24or32_TOP(p)  (*(const UInt32 *)(const void *)(p))
+static Z7_FORCE_INLINE UInt32 Z_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return value;
+}
+#define GetUi24or32(p)      Z_Load32(p)
+#define GetUi24or32_TOP(p)  Z_Load32(p)
 #else
 #define GetUi24or32(p) ( \
              ((const Byte *)(p))[0]        | \
@@ -106,6 +114,14 @@ if (Z7_ZDECODER_BIT9_COMPAT) is not defined
 HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
     ICompressProgressInfo *progress) throw()
 {
+  HRESULT callbackResult;
+  return Decode(inStream, outStream, progress, callbackResult);
+}
+
+HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
+    ICompressProgressInfo *progress, HRESULT &callbackResult) throw()
+{
+  callbackResult = S_OK;
   CAlignedBuffer_NoSize_NoExceptions inBuf, outBuf;
   inBuf.Alloc_after_Constructor(k_InBuf_Size + 16); // + 16 for overread
   if (!inBuf.IsAllocated())
@@ -113,7 +129,7 @@ HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
   Byte *src_end;
   {
     size_t size = k_InBuf_Size;
-    RINOK(ReadStream(inStream, inBuf, &size))
+    RINOK(callbackResult = ReadStream(inStream, inBuf, &size))
     if (size < 3 || GetUi16a(inBuf) != 0x9d1f) // if (inBuf[0] != 0x1f || inBuf[1] != 0x9d)
       return S_FALSE;
     src_end = inBuf + size;
@@ -243,9 +259,9 @@ HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
             {
               progressCounter = 0;
               const UInt64 inVal = inProcessed + (size_t)(src - inBuf);
-              RINOK(progress->SetRatioInfo(&inVal, &outProcessed))
+              RINOK(callbackResult = progress->SetRatioInfo(&inVal, &outProcessed))
             }
-            RINOK(WriteStream(outStream, outBuf, write))
+            RINOK(callbackResult = WriteStream(outStream, outBuf, write))
             outPos -= write;
             memcpy(outBuf, outBuf + write, outPos);
           }
@@ -294,12 +310,15 @@ HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
           size_t num = k_InBuf_Size - rem;
           res = ReadStream(inStream, inBuf + rem, &num);
           if (res != S_OK)
+          {
+            callbackResult = res;
             break;
+          }
           if (progressCounter >= PROGRESS_COUNTER_MAX && progress)
           {
             progressCounter = 0;
             const UInt64 outVal = outProcessed + outPos;
-            RINOK(progress->SetRatioInfo(&inProcessed, &outVal))
+            RINOK(callbackResult = progress->SetRatioInfo(&inProcessed, &outVal))
           }
           rem += num;
           src = inBuf;
@@ -325,6 +344,8 @@ HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
   if (outBuf)
   {
     const HRESULT res2 = WriteStream(outStream, outBuf, outPos);
+    if (callbackResult == S_OK)
+      callbackResult = res2;
     if (res == S_OK)
       res = res2;
   }
@@ -336,7 +357,7 @@ HRESULT Decode(ISequentialInStream *inStream, ISequentialOutStream *outStream,
 
 bool CheckStream(const Byte *src, const size_t size) throw()
 {
-  if (size < 3 || GetUi16(src) != 0x9d1f) // if (src[0] != 0x1f || src[1] != 0x9d)
+  if (size < 3 || src[0] != 0x1f || src[1] != 0x9d)
     return false;
   unsigned prop = src[2];
   const unsigned maxBits = prop & kNumBitsMask;

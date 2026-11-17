@@ -138,8 +138,21 @@ public:
 
   INT_PTR Create(const UString &title, NWindows::CThread &thread, HWND wndParent = NULL)
   {
-    _title = title;
-    INT_PTR res = CModalDialog::Create(IDD_PROGRESS, wndParent);
+    INT_PTR res;
+    try
+    {
+      _title = title;
+      res = CModalDialog::Create(IDD_PROGRESS, wndParent);
+    }
+    catch (...)
+    {
+      _wasCreated = true;
+      _dialogCreatedEvent.Set();
+      thread.Wait_Close();
+      throw;
+    }
+    _wasCreated = true;
+    _dialogCreatedEvent.Set();
     thread.Wait_Close();
     return res;
   }

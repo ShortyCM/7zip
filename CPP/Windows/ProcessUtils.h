@@ -49,6 +49,8 @@ class CProcess: public CHandle
 public:
   bool Open(DWORD desiredAccess, bool inheritHandle, DWORD processId)
   {
+    if (!Close())
+      return false;
     _handle = ::OpenProcess(desiredAccess, inheritHandle, processId);
     return (_handle != NULL);
   }

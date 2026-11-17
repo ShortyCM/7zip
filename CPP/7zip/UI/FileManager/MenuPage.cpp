@@ -10,6 +10,7 @@
 
 #include "../Explorer/ContextMenuFlags.h"
 #include "../Explorer/RegistryContextMenu.h"
+#include "../Explorer/MyMessages.h"
 #include "../Explorer/resource.h"
 
 #include "../FileManager/PropertyNameRes.h"
@@ -348,7 +349,12 @@ LONG CMenuPage::OnApply()
         ci.Flags |= kMenuItems[i].Flag;
     
     ci.Flags_Def = _flags_Changed;
-    ci.Save();
+    const LONG result = ci.Save();
+    if (result != ERROR_SUCCESS)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
 
     Clear_MenuChanged();
   }

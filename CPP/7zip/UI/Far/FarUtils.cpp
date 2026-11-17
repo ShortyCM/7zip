@@ -459,8 +459,19 @@ void ReduceString(UString &s, unsigned size)
   {
     if (size > 5)
       size -= 5;
-    s.Delete(size / 2, s.Len() - size);
-    s.Insert(size / 2, L" ... ");
+    unsigned head = size / 2;
+    unsigned tail = s.Len() - (size - head);
+    // Keep UTF-16 surrogate pairs together at both abbreviation boundaries.
+    if (head != 0 &&
+        s[head - 1] >= 0xd800 && s[head - 1] <= 0xdbff &&
+        s[head] >= 0xdc00 && s[head] <= 0xdfff)
+      --head;
+    if (tail < s.Len() &&
+        s[tail - 1] >= 0xd800 && s[tail - 1] <= 0xdbff &&
+        s[tail] >= 0xdc00 && s[tail] <= 0xdfff)
+      ++tail;
+    s.Delete(head, tail - head);
+    s.Insert(head, L" ... ");
   }
 }
 

@@ -354,7 +354,10 @@ static HRESULT ReadStream_OpenProgress(ISequentialInStream *stream, void *data, 
     size -= processedSizeLoc;
     bytes += processedSizeLoc;
     const UInt64 files = 1;
-    RINOK(openCallback->SetCompleted(&files, &bytes))
+    if (openCallback)
+    {
+      RINOK(openCallback->SetCompleted(&files, &bytes))
+    }
   }
   return S_OK;
 }

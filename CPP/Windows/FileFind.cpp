@@ -874,6 +874,7 @@ bool DoesFileOrDirExist(CFSTR name)
 
 void CEnumerator::SetDirPrefix(const FString &dirPrefix)
 {
+  _findFile.Close();
   _wildcard = dirPrefix;
   _wildcard.Add_Char('*');
 }
@@ -955,6 +956,8 @@ bool CFindChangeNotification::Close() throw()
            
 HANDLE CFindChangeNotification::FindFirst(CFSTR path, bool watchSubtree, DWORD notifyFilter)
 {
+  if (!Close())
+    return INVALID_HANDLE_VALUE;
   #ifndef _UNICODE
   if (!g_IsNT)
     _handle = ::FindFirstChangeNotification(fs2fas(path), BoolToBOOL(watchSubtree), notifyFilter);
@@ -1311,6 +1314,11 @@ CEnumerator::~CEnumerator()
 
 void CEnumerator::SetDirPrefix(const FString &dirPrefix)
 {
+  if (_dir)
+  {
+    closedir(_dir);
+    _dir = NULL;
+  }
   _wildcard = dirPrefix;
 }
 

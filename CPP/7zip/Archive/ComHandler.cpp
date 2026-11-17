@@ -1152,6 +1152,7 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
 )
   CMyComPtr<IInStream> _stream;
   CDatabase _db;
+  HRESULT GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &inputResult);
 };
 
 static const Byte kProps[] =
@@ -1321,7 +1322,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       RINOK(extractCallback->PrepareOperation(askMode))
       res = NExtract::NOperationResult::kDataError;
       CMyComPtr<ISequentialInStream> inStream;
-      const HRESULT hres = GetStream(index, &inStream);
+      HRESULT inputResult = S_OK;
+      const HRESULT hres = GetStream2(index, &inStream, inputResult);
+      RINOK(inputResult)
       if (hres == S_FALSE)
         res = NExtract::NOperationResult::kDataError;
       /*
@@ -1353,7 +1356,14 @@ Z7_COM7F_IMF(CHandler::GetNumberOfItems(UInt32 *numItems))
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  HRESULT inputResult = S_OK;
+  return GetStream2(index, stream, inputResult);
+}
+
+HRESULT CHandler::GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &inputResult)
+{
   COM_TRY_BEGIN
+  inputResult = S_OK;
   *stream = NULL;
   const UInt32 itemIndex = _db.Refs[index].Did;
   const CItem &item = _db.Items[itemIndex];
@@ -1386,13 +1396,18 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
           temp;
       if (phyPos != offset)
       {
-        RINOK(InStream_SeekSet(_stream, offset))
+        inputResult = InStream_SeekSet(_stream, offset);
+        RINOK(inputResult)
         phyPos = offset;
       }
       UInt32 readSize = (UInt32)1 << k_MiniSectorSizeBits;
       if (readSize > size)
           readSize = size;
-      RINOK(ReadStream_FALSE(_stream, dest, readSize))
+      size_t processedSize = readSize;
+      inputResult = ReadStream(_stream, dest, &processedSize);
+      RINOK(inputResult)
+      if (processedSize != readSize)
+        return S_FALSE;
       phyPos += readSize;
       dest += readSize;
       sid = _db.Mat[sid];
@@ -1434,7 +1449,8 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
   }
   if (sid != NFatID::kEndOfChain)
     return S_FALSE;
-  RINOK(streamSpec->InitAndSeek())
+  inputResult = streamSpec->InitAndSeek();
+  RINOK(inputResult)
   *stream = streamTemp.Detach();
   return S_OK;
   COM_TRY_END

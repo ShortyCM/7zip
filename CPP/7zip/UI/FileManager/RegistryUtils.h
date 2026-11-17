@@ -5,14 +5,15 @@
 
 #include "../../../Common/MyTypes.h"
 #include "../../../Common/MyString.h"
+#include "../../../Common/MyWindows.h"
 
-void SaveRegLang(const UString &path);
+LONG SaveRegLang(const UString &path);
 void ReadRegLang(UString &path);
 
-void SaveRegEditor(bool useEditor, const UString &path);
+LONG SaveRegEditor(bool useEditor, const UString &path);
 void ReadRegEditor(bool useEditor, UString &path);
 
-void SaveRegDiff(const UString &path);
+LONG SaveRegDiff(const UString &path);
 void ReadRegDiff(UString &path);
 
 void ReadReg_VerCtrlPath(UString &path);
@@ -29,7 +30,7 @@ struct CFmSettings
 
   bool ShowSystemMenu;
 
-  void Save() const;
+  LONG Save() const;
   void Load();
 };
 
@@ -37,7 +38,7 @@ struct CFmSettings
 // bool ReadLockMemoryAdd();
 
 bool ReadLockMemoryEnable();
-void SaveLockMemoryEnable(bool enable);
+LONG SaveLockMemoryEnable(bool enable);
 
 void SaveFlatView(UInt32 panelIndex, bool enable);
 bool ReadFlatView(UInt32 panelIndex);

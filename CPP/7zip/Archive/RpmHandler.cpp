@@ -412,6 +412,7 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 
 Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NWindows::NCOM::CPropVariant prop;
   if (index == 0)
   switch (propID)
@@ -476,6 +477,7 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
 
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -679,6 +681,7 @@ HRESULT CHandler::Open2(ISequentialInStream *stream)
   {
     Byte temp[256];
     RINOK(ReadStream_FALSE(stream, temp, sizeof(temp)))
+    _headersSize += sizeof(temp);
   }
   else if (_lead.SignatureType == RPMSIG_HEADERSIG)
   {

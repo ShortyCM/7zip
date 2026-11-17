@@ -74,6 +74,9 @@ public:
   bool Create(UInt32 bufSize) { return _stream.Create(bufSize); }
   void SetStream(ISequentialInStream *inStream) { _stream.SetStream(inStream); }
   void ClearStreamPtr() { _stream.ClearStreamPtr(); }
+  #ifdef Z7_NO_EXCEPTIONS
+  HRESULT GetErrorCode() const { return _stream.ErrorCode; }
+  #endif
   void Init()
   {
     _stream.Init();

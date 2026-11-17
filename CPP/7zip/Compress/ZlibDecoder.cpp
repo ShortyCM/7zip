@@ -12,7 +12,7 @@ namespace NCompress {
 namespace NZlib {
 
 #define DEFLATE_TRY_BEGIN try {
-#define DEFLATE_TRY_END } catch(...) { return S_FALSE; }
+#define DEFLATE_TRY_END } catch(...) { return E_OUTOFMEMORY; }
 
 #define ADLER_MOD 65521
 #define ADLER_LOOP_MAX 5550

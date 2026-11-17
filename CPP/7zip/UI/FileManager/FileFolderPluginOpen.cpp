@@ -323,7 +323,9 @@ HRESULT CFfpOpen::OpenFileFolderPlugin(IInStream *inStream,
       t.OpenCallbackSpec;
 
     if (inStream)
-      openCallbackSpec->SetSubArchiveName(fs2us(fileName));
+    {
+      RINOK(openCallbackSpec->SetSubArchiveName(fs2us(fileName)))
+    }
     else
     {
       RINOK(openCallbackSpec->Init2(dirPrefix, fileName))

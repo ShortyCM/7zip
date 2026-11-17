@@ -284,7 +284,12 @@ LONG CSettingsPage::OnApply()
     
     st.ShowSystemMenu = IsButtonCheckedBool(IDX_SETTINGS_SHOW_SYSTEM_MENU);
 
-    st.Save();
+    const LONG result = st.Save();
+    if (result != ERROR_SUCCESS)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
     _wasChanged = false;
   }
 
@@ -295,7 +300,12 @@ LONG CSettingsPage::OnApply()
     {
       const bool enable = IsButtonCheckedBool(IDX_SETTINGS_LARGE_PAGES);
       NSecurity::EnablePrivilege_LockMemory(enable);
-      SaveLockMemoryEnable(enable);
+      const LONG result = SaveLockMemoryEnable(enable);
+      if (result != ERROR_SUCCESS)
+      {
+        ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+        return PSNRET_INVALID_NOCHANGEPAGE;
+      }
     }
     _largePages_wasChanged = false;
   }
@@ -317,7 +327,12 @@ LONG CSettingsPage::OnApply()
         return PSNRET_INVALID;
       }
     }
-    NExtract::Save_LimitGB(val);
+    const LONG result = NExtract::Save_LimitGB(val);
+    if (result != ERROR_SUCCESS)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage((DWORD)result));
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
     _memx_wasChanged = false;
   }
 

@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 // #include <stdio.h>
 
 #include "../../../C/CpuArch.h"
@@ -27,9 +29,26 @@ using namespace NWindows;
 namespace NArchive {
 namespace NVmdk {
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 #define LE_16(offs, dest) dest = Get16(p + (offs))
 #define LE_32(offs, dest) dest = Get32(p + (offs))
@@ -403,8 +422,10 @@ struct CExtent
 
   HRESULT Seek(UInt64 offset)
   {
+    PosInArc = (UInt64)(Int64)-1;
+    RINOK(InStream_SeekSet(Stream, offset))
     PosInArc = offset;
-    return InStream_SeekSet(Stream, offset);
+    return S_OK;
   }
 
   HRESULT InitAndSeek()
@@ -417,7 +438,10 @@ struct CExtent
   HRESULT Read(void *data, size_t *size)
   {
     HRESULT res = ReadStream(Stream, data, size);
-    PosInArc += *size;
+    if (res == S_OK)
+      PosInArc += *size;
+    else
+      PosInArc = (UInt64)(Int64)-1;
     return res;
   }
 };
@@ -586,7 +610,10 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
         */
       }
       // _stream_PackSize += size2;
-      extent.PosInArc += size2;
+      if (res == S_OK)
+        extent.PosInArc += size2;
+      else
+        extent.PosInArc = (UInt64)(Int64)-1;
       _virtPos += size2;
       if (processedSize)
         *processedSize = size2;
@@ -734,7 +761,10 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
               return S_OK;
               */
             }
-            extent.PosInArc += size2;
+            if (res == S_OK)
+              extent.PosInArc += size2;
+            else
+              extent.PosInArc = (UInt64)(Int64)-1;
             // _stream_PackSize += size2;
             _virtPos += size2;
             if (processedSize)
@@ -1321,8 +1351,7 @@ HRESULT CExtent::Open3(IInStream *stream, IArchiveOpenCallback *openCallback,
     if (h.Is_Marker())
     {
       Byte buf2[1 << 9];
-      if (ReadForHeader(stream, h.gdOffset - 1, buf2, 1) != S_OK)
-        return S_FALSE;
+      RINOK(ReadForHeader(stream, h.gdOffset - 1, buf2, 1))
       {
         CMarker m;
         m.Parse(buf2);
@@ -1380,8 +1409,7 @@ HRESULT CExtent::Open3(IInStream *stream, IArchiveOpenCallback *openCallback,
       if (h.Is_Marker())
       {
         Byte buf2[1 << 9];
-        if (ReadForHeader(stream, v - 1, buf2, 1) != S_OK)
-          return S_FALSE;
+        RINOK(ReadForHeader(stream, v - 1, buf2, 1))
         {
           CMarker m;
           m.Parse(buf2);
@@ -1421,7 +1449,10 @@ HRESULT CExtent::Open3(IInStream *stream, IArchiveOpenCallback *openCallback,
   else if (lastSector != 0)
   {
     Byte buf[1 << 9];
-    if (ReadForHeader(stream, lastSector, buf, 1) == S_OK)
+    const HRESULT res = ReadForHeader(stream, lastSector, buf, 1);
+    if (res != S_OK && res != S_FALSE)
+      return res;
+    if (res == S_OK)
     {
       UInt64 lba = Get64(buf);
       if (lba == (lastVirtCluster << (ClusterBits - 9)))

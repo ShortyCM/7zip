@@ -23,8 +23,6 @@ using namespace NFar;
 
 static const char * const kHelpTopicExtrFromSevenZip =  "Extract";
 
-static const char kDirDelimiter = CHAR_PATH_SEPARATOR;
-
 static const char * const kExractPathHistoryName  = "7-ZipExtractPath";
 
 HRESULT CPlugin::ExtractFiles(
@@ -40,7 +38,7 @@ HRESULT CPlugin::ExtractFiles(
   if (_agent->_isHashHandler)
   {
     g_StartupInfo.ShowMessage(NMessageID::kMoveIsNotSupported);
-    return NFileOperationReturnCode::kError;
+    return E_NOTIMPL;
   }
 
   CScreenRestorer screenRestorer;
@@ -69,20 +67,24 @@ HRESULT CPlugin::ExtractFiles(
       */
       passwordIsDefined, password);
 
+  HRESULT result;
   if (decompressAllItems)
-    return m_ArchiveHandler->Extract(pathMode, overwriteMode,
+    result = m_ArchiveHandler->Extract(pathMode, overwriteMode,
         destPath, BoolToInt(false), extractCallback);
   else
   {
     CMyComPtr<IArchiveFolder> archiveFolder;
     _folder.QueryInterface(IID_IArchiveFolder, &archiveFolder);
 
-    return archiveFolder->Extract(indices, numIndices,
+    result = archiveFolder->Extract(indices, numIndices,
         BoolToInt(true), // includeAltStreams
         BoolToInt(false), // replaceAltStreamChars
         pathMode, overwriteMode,
         destPath, BoolToInt(false), extractCallback);
   }
+  if (result == S_OK && extractCallbackSpec->ThereWereErrors)
+    return E_FAIL;
+  return result;
 }
 
 NFileOperationReturnCode::EEnum CPlugin::GetFiles(struct PluginPanelItem *panelItems,
@@ -214,7 +216,7 @@ NFileOperationReturnCode::EEnum CPlugin::GetFilesReal(struct PluginPanelItem *pa
       }
       else
       {
-        if (destPathU.Back() == kDirDelimiter)
+        if (IsPathSepar(destPathU.Back()))
           break;
       }
       g_StartupInfo.ShowErrorMessage("You must specify directory path");

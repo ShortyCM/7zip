@@ -151,11 +151,6 @@ Z7_class_CHandler_final:
       }
     }
 
-    if (hres == S_OK && progress)
-    {
-      // RINOK(
-      progress->SetRatioInfo(&decoder.Stat.InSize, &decoder.Stat.OutSize);
-    }
     return hres;
   }
 
@@ -870,7 +865,12 @@ static HRESULT DecodeBlock(CXzUnpackerCPP2 &xzu,
     if ((inLen == 0 && outLen == 0) || blockFinished)
     {
       if (packRem != 0 || !blockFinished || unpackSize != outPos)
+      {
+        if (readRes != S_OK && packRem != 0
+            && status == CODER_STATUS_NEEDS_MORE_INPUT)
+          return readRes;
         return S_FALSE;
+      }
       if (XzUnpacker_GetPackSizeForIndex(&xzu.p) != packSize)
         return S_FALSE;
       return S_OK;
@@ -1068,8 +1068,11 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   const HRESULT hres = Decode(decoder, _seqStream, realOutStream, lps);
 
-  if (!decoder.MainDecodeSRes_wasUsed)
+  if (!decoder.MainDecodeSRes_wasUsed || hres == E_OUTOFMEMORY)
     return hres == S_OK ? E_FAIL : hres;
+
+  if (hres == S_OK)
+    RINOK(lps.Interface()->SetRatioInfo(&decoder.Stat.InSize, &decoder.Stat.OutSize))
 
   opRes = Get_Extract_OperationResult(decoder);
   if (opRes == NExtract::NOperationResult::kOK

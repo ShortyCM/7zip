@@ -19,7 +19,7 @@ inline UInt64 Calc_From_Val_Percents_Less100(UInt64 val, UInt64 percents)
     return 0;
   if (val <= (UInt64)(Int64)-1 / percents)
     return val * percents / 100;
-  return val / 100 * percents;
+  return val / 100 * percents + (val % 100) * percents / 100;
 }
 
 UInt64 Calc_From_Val_Percents(UInt64 val, UInt64 percents);

@@ -113,16 +113,26 @@ public:
 #if 0
   bool OpenStdIn();
 #endif
-  
-  bool Open(CFSTR fileName)
+
+private:
+  void ResetState()
   {
     _info_WasLoaded = false;
+    #if defined(Z7_FILE_STREAMS_USE_WIN_FILE) && defined(Z7_DEVICE_FILE)
+    VirtPos = PhyPos = 0;
+    BufSize = 0;
+    #endif
+  }
+public:
+  bool Open(CFSTR fileName)
+  {
+    ResetState();
     return File.Open(fileName);
   }
   
   bool OpenShared(CFSTR fileName, bool shareForWrite)
   {
-    _info_WasLoaded = false;
+    ResetState();
     return File.OpenShared(fileName, shareForWrite);
   }
 };

@@ -14,6 +14,7 @@ void COutMemStream::Free()
 
 void COutMemStream::Init()
 {
+  StopWritingEvent.Reset();
   WriteToRealStreamEvent.Reset();
   _unlockEventWasSent = false;
   _realStreamMode = false;
@@ -113,7 +114,15 @@ Z7_COM7F_IMF(COutMemStream::Write(const void *data, UInt32 size, UInt32 *process
     void *p = _memManager->AllocateBlock();
     if (!p)
       return E_FAIL;
-    Blocks.Blocks.Add(p);
+    try
+    {
+      Blocks.Blocks.Add(p);
+    }
+    catch (...)
+    {
+      _memManager->FreeBlock(p, Blocks.LockMode);
+      return E_OUTOFMEMORY;
+    }
   }
   return S_OK;
 }

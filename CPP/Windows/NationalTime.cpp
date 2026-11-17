@@ -11,6 +11,12 @@ namespace NTime {
 bool MyGetTimeFormat(LCID locale, DWORD flags, CONST SYSTEMTIME *time,
     LPCTSTR format, CSysString &resultString)
 {
+  CSysString formatCopy;
+  if (format)
+  {
+    formatCopy = format;
+    format = formatCopy;
+  }
   resultString.Empty();
   int numChars = ::GetTimeFormat(locale, flags, time, format, NULL, 0);
   if (numChars == 0)
@@ -24,6 +30,12 @@ bool MyGetTimeFormat(LCID locale, DWORD flags, CONST SYSTEMTIME *time,
 bool MyGetDateFormat(LCID locale, DWORD flags, CONST SYSTEMTIME *time,
     LPCTSTR format, CSysString &resultString)
 {
+  CSysString formatCopy;
+  if (format)
+  {
+    formatCopy = format;
+    format = formatCopy;
+  }
   resultString.Empty();
   int numChars = ::GetDateFormat(locale, flags, time, format, NULL, 0);
   if (numChars == 0)

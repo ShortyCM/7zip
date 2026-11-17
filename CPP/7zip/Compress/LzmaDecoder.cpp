@@ -185,6 +185,7 @@ HRESULT CDecoder::CodeSpec(ISequentialInStream *inStream, ISequentialOutStream *
 
       if (needStop)
       {
+        RINOK(readRes)
         if (res != 0)
         {
           // return SResToHRESULT(res);
@@ -281,24 +282,33 @@ Z7_COM7F_IMF(CDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
       *processedSize += (UInt32)outProcessed;
 
     if (res != 0)
-      return S_FALSE;
+      return readRes != S_OK ? readRes : S_FALSE;
     
-    /*
     if (status == LZMA_STATUS_FINISHED_WITH_MARK)
+    {
+      RINOK(readRes)
+      if (FinishStream && _outSizeDefined && _outProcessed != _outSize)
+        return S_FALSE;
       return readRes;
+    }
 
     if (size == 0 && status != LZMA_STATUS_NEEDS_MORE_INPUT)
     {
+      RINOK(readRes)
       if (FinishStream
           && _outSizeDefined && _outProcessed >= _outSize
           && status != LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK)
         return S_FALSE;
       return readRes;
     }
-    */
 
     if (inProcessed == 0 && outProcessed == 0)
+    {
+      RINOK(readRes)
+      if (FinishStream && _inLim == 0)
+        return S_FALSE;
       return readRes;
+    }
   }
 }
 

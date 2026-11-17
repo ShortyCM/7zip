@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../../C/Alloc.h"
 #include "../../../../C/CpuArch.h"
 
@@ -30,6 +32,22 @@ CBlockPackData::~CBlockPackData() throw()
   z7_AlignedFree(_buf);
 }
 
+static Z7_FORCE_INLINE UInt32 Checksum_Load32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+#ifdef MY_CPU_64BIT
+static Z7_FORCE_INLINE UInt64 Checksum_Load64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
+#endif
+
 static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
 {
 #ifdef MY_CPU_64BIT
@@ -40,7 +58,7 @@ static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
     const Byte *lim = p + (size_t)size - 16;
     do
     {
-      sum64 ^= GetUi64(p) ^ GetUi64(p + 8);
+      sum64 ^= Checksum_Load64(p) ^ Checksum_Load64(p + 8);
       p += 16;
     }
     while (p <= lim);
@@ -48,7 +66,7 @@ static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
   }
   if (size >= 8)
   {
-    sum64 ^= GetUi64(p);
+    sum64 ^= Checksum_Load64(p);
     p += 8;
     size -= 8;
   }
@@ -63,10 +81,10 @@ static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
     const Byte *lim = p + (size_t)size - 16;
     do
     {
-      sum ^= GetUi32(p)
-           ^ GetUi32(p + 4)
-           ^ GetUi32(p + 8)
-           ^ GetUi32(p + 12);
+      sum ^= Checksum_Load32(p)
+           ^ Checksum_Load32(p + 4)
+           ^ Checksum_Load32(p + 8)
+           ^ Checksum_Load32(p + 12);
       p += 16;
     }
     while (p <= lim);
@@ -74,7 +92,7 @@ static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
   }
   if (size >= 8)
   {
-    sum ^= GetUi32(p + 0) ^ GetUi32(p + 4);
+    sum ^= Checksum_Load32(p + 0) ^ Checksum_Load32(p + 4);
     p += 8;
     size -= 8;
   }
@@ -83,7 +101,7 @@ static UInt32 CheckSum(const Byte *p, UInt32 size) throw()
   
   if (size >= 4)
   {
-    sum ^= GetUi32(p);
+    sum ^= Checksum_Load32(p);
     p += 4;
   }
   if (size &= 3)

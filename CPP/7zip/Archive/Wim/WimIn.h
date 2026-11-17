@@ -410,7 +410,7 @@ struct CImageInfo
   }
   
   CImageInfo(): CTimeDefined(false), MTimeDefined(false), NameDefined(false),
-      IndexDefined(false), ItemIndexInXml(-1) {}
+      IndexDefined(false), DirCount(0), FileCount(0), ItemIndexInXml(-1) {}
   void Parse(const CXmlItem &item);
 };
 

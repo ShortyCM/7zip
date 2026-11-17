@@ -35,6 +35,8 @@ Z7_CLASS_IMP_COM_3(
   */
   void AddErrorMessage(LPCTSTR message);
 public:
+  bool ThereWereErrors;
+
   void Init(UINT codePage,
       CProgressBox *progressBox,
       bool passwordIsDefined, const UString &password);

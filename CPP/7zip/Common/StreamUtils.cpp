@@ -22,8 +22,12 @@ HRESULT InStream_AtBegin_GetSize(IInStream *stream, UInt64 &sizeRes) throw()
     Z7_DECL_CMyComPtr_QI_FROM(
         IStreamGetSize,
         streamGetSize, stream)
-    if (streamGetSize && streamGetSize->GetSize(&sizeRes) == S_OK)
-      return S_OK;
+    if (streamGetSize)
+    {
+      const HRESULT res = streamGetSize->GetSize(&sizeRes);
+      if (res == S_OK || res == E_ABORT)
+        return res;
+    }
   }
 #endif
   const HRESULT hres = InStream_GetSize_SeekToEnd(stream, sizeRes);
@@ -40,8 +44,12 @@ HRESULT InStream_GetPos_GetSize(IInStream *stream, UInt64 &curPosRes, UInt64 &si
     Z7_DECL_CMyComPtr_QI_FROM(
         IStreamGetSize,
         streamGetSize, stream)
-    if (streamGetSize && streamGetSize->GetSize(&sizeRes) == S_OK)
-      return S_OK;
+    if (streamGetSize)
+    {
+      const HRESULT res = streamGetSize->GetSize(&sizeRes);
+      if (res == S_OK || res == E_ABORT)
+        return res;
+    }
   }
 #endif
   const HRESULT hres = InStream_GetSize_SeekToEnd(stream, sizeRes);

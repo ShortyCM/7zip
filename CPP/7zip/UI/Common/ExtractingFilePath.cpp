@@ -137,8 +137,8 @@ static bool IsSupportedName(const UString &name)
       continue;
     if (i >= g_ReservedWithNum_Index)
     {
-      wchar_t c = name[len];
-      if (c < L'0' || c > L'9')
+      const wchar_t c = name[len];
+      if ((c < L'0' || c > L'9') && c != 0x00b9 && c != 0x00b2 && c != 0x00b3)
         continue;
       len++;
     }

@@ -1052,8 +1052,7 @@ static void MakeCheckOrder(CCodecs *codecs,
   #define HASH_VAL(buf) ((buf)[0])
 #else
   static const unsigned kNumHashBytes = 2;
-  // #define HASH_VAL(buf) ((buf)[0] | ((UInt32)(buf)[1] << 8))
-  #define HASH_VAL(buf) GetUi16(buf)
+  #define HASH_VAL(buf) ((buf)[0] | ((UInt32)(buf)[1] << 8))
 #endif
 
 static bool IsExeExt(const UString &ext)
@@ -1219,13 +1218,13 @@ void CArcErrorInfo::ClearErrors()
   WarningMessage.Empty();
 }
 
-HRESULT CArc::ReadBasicProps(IInArchive *archive, UInt64 startPos, HRESULT openRes)
+HRESULT CArc::ReadBasicProps(IInArchive *archive, UInt64 startPos, HRESULT openRes, bool fileSizeDefined)
 {
   // OkPhySize_Defined = false;
   PhySize_Defined = false;
   PhySize = 0;
   Offset = 0;
-  AvailPhySize = FileSize - startPos;
+  AvailPhySize = fileSizeDefined ? FileSize - startPos : 0;
 
   ErrorInfo.ClearErrors();
   {
@@ -1267,6 +1266,9 @@ HRESULT CArc::ReadBasicProps(IInArchive *archive, UInt64 startPos, HRESULT openR
 
     bool offsetDefined;
     RINOK(Archive_GetArcProp_Int(archive, kpidOffset, Offset, offsetDefined))
+
+    if (!fileSizeDefined)
+      return S_OK;
 
     Int64 globalOffset = (Int64)startPos + Offset;
     AvailPhySize = (UInt64)((Int64)FileSize - globalOffset);
@@ -1953,7 +1955,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
         result = openSeq->OpenSeq(op.seqStream);
       }
       
-      RINOK(ReadBasicProps(archive, 0, result))
+      RINOK(ReadBasicProps(archive, 0, result, op.stream != NULL))
       
       if (result == S_FALSE)
       {
@@ -2227,7 +2229,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
       }
       RINOK(result)
 
-      RINOK(ReadBasicProps(archive, 0, result))
+      RINOK(ReadBasicProps(archive, 0, result, true))
 
       if (Offset > 0)
       {
@@ -2717,7 +2719,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
             useOffsetCallback ? (IArchiveOpenCallback *)openCallback_Offset : (IArchiveOpenCallback *)op.callback,
             extractCallback_To_OpenCallback);
 
-        RINOK(ReadBasicProps(archive, ai.Flags_UseGlobalOffset() ? 0 : startArcPos, result))
+        RINOK(ReadBasicProps(archive, ai.Flags_UseGlobalOffset() ? 0 : startArcPos, result, true))
 
         bool isOpen = false;
       
@@ -3163,6 +3165,7 @@ HRESULT CArchiveLink::Close()
 
 void CArchiveLink::Release()
 {
+  IsOpen = false;
   // NonOpenErrorFormatIndex = -1;
   NonOpen_ErrorInfo.ClearErrors();
   NonOpen_ArcPath.Empty();
@@ -3324,7 +3327,9 @@ HRESULT CArchiveLink::Open(COpenOptions &op)
           IArchiveOpenSetSubArchiveName,
           setSubArchiveName, op.callback)
       if (setSubArchiveName)
-        setSubArchiveName->SetSubArchiveName(arc2.Path);
+      {
+        RINOK(setSubArchiveName->SetSubArchiveName(arc2.Path))
+      }
     }
     
     arc2.SubfileIndex = mainSubfile;
@@ -3366,6 +3371,7 @@ HRESULT CArchiveLink::Open(COpenOptions &op)
 
 HRESULT CArchiveLink::Open2(COpenOptions &op, IOpenCallbackUI *callbackUI)
 {
+  VolumePaths.Clear();
   VolumesSize = 0;
   CMyComPtr2_Create<IArchiveOpenCallback, COpenCallbackImp> openCallbackSpec;
   openCallbackSpec->Callback = callbackUI;
@@ -3379,7 +3385,7 @@ HRESULT CArchiveLink::Open2(COpenOptions &op, IOpenCallbackUI *callbackUI)
   }
   else
   {
-    openCallbackSpec->SetSubArchiveName(op.filePath);
+    RINOK(openCallbackSpec->SetSubArchiveName(op.filePath))
   }
 
   op.callback = openCallbackSpec;
@@ -3443,7 +3449,7 @@ HRESULT CArc::ReOpen(const COpenOptions &op, IArchiveOpenCallback *openCallback_
   
   if (res == S_OK)
   {
-    RINOK(ReadBasicProps(Archive, (UInt64)globalOffset, res))
+    RINOK(ReadBasicProps(Archive, (UInt64)globalOffset, res, op.stream != NULL))
     ArcStreamOffset = (UInt64)globalOffset;
     if (ArcStreamOffset != 0)
       InStream = op.stream;
@@ -3547,7 +3553,7 @@ static bool ParseTypeParams(const UString &s, COpenType &type)
     return true;
   if (s[1] == 0)
   {
-    switch ((unsigned)(Byte)s[0])
+    switch ((unsigned)s[0])
     {
       case 'e': type.EachPos = true; return true;
       case 'a': type.CanReturnArc = true; return true;

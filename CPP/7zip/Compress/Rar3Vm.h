@@ -5,6 +5,8 @@
 #ifndef ZIP7_INC_COMPRESS_RAR3_VM_H
 #define ZIP7_INC_COMPRESS_RAR3_VM_H
 
+#include <string.h>
+
 #include "../../../C/CpuArch.h"
 
 #include "../../Common/MyVector.h"
@@ -36,8 +38,18 @@ public:
 
 namespace NVm {
 
-inline UInt32 GetValue32(const void *addr) { return GetUi32(addr); }
-inline void SetValue32(void *addr, UInt32 value) { SetUi32(addr, value) }
+inline UInt32 GetValue32(const void *addr)
+{
+  UInt32 value;
+  memcpy(&value, addr, sizeof(value));
+  return GetUi32(&value);
+}
+inline void SetValue32(void *addr, UInt32 value)
+{
+  UInt32 stored;
+  SetUi32(&stored, value)
+  memcpy(addr, &stored, sizeof(stored));
+}
 
 const unsigned kNumRegBits = 3;
 const UInt32 kNumRegs = 1 << kNumRegBits;
@@ -142,7 +154,7 @@ class CVm
     if (byteMode)
       return(*(const Byte *)addr);
     else
-      return GetUi32(addr);
+      return GetValue32(addr);
   }
 
   static void SetValue(bool byteMode, void *addr, UInt32 value)
@@ -150,7 +162,7 @@ class CVm
     if (byteMode)
       *(Byte *)addr = (Byte)value;
     else
-      SetUi32(addr, value)
+      SetValue32(addr, value);
   }
 
   UInt32 GetFixedGlobalValue32(UInt32 globalOffset) { return GetValue(false, &Mem[kGlobalOffset + globalOffset]); }

@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 // #include <stdio.h>
 
 #include "../../../Common/DynamicBuffer.h"
@@ -15,9 +17,24 @@
 
 #include "ZipIn.h"
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 #define G16(offs, v) v = Get16(p + (offs))
 #define G32(offs, v) v = Get32(p + (offs))
@@ -1425,6 +1442,7 @@ HRESULT CInArchive::Read_LocalItem_After_CdItem(CItemEx &item, bool &isAvail, bo
     }
     item.FromLocal = true;
   }
+  catch (const CSystemException &e) { return e.ErrorCode; }
   catch(...) { return S_FALSE; }
   return S_OK;
 }
@@ -1643,6 +1661,7 @@ HRESULT CInArchive::Read_LocalItem_After_CdItem_Full(CItemEx &item)
     if (item.HasDescriptor())
       return CheckDescriptor(item);
   }
+  catch (const CSystemException &e) { return e.ErrorCode; }
   catch(...) { return S_FALSE; }
   return S_OK;
 }
@@ -1807,7 +1826,10 @@ HRESULT CInArchive::FindCd(bool checkOffsetMode)
           // we try to use absolute offset from locator.
           if (absEcd64 != locator.Ecd64Offset)
           {
-            if (TryEcd64(locator.Ecd64Offset, cdInfo) == S_OK)
+            const HRESULT res = TryEcd64(locator.Ecd64Offset, cdInfo);
+            if (res != S_OK && res != S_FALSE)
+              return res;
+            if (res == S_OK)
             {
               ArcInfo.Base = 0;
               // ArcInfo.BaseVolIndex = cdInfo.ThisDisk;
@@ -1821,7 +1843,10 @@ HRESULT CInArchive::FindCd(bool checkOffsetMode)
               && ArcInfo.MarkerPos != 0
               && ArcInfo.MarkerPos + locator.Ecd64Offset != absEcd64)
           {
-            if (TryEcd64(ArcInfo.MarkerPos + locator.Ecd64Offset, cdInfo) == S_OK)
+            const HRESULT res = TryEcd64(ArcInfo.MarkerPos + locator.Ecd64Offset, cdInfo);
+            if (res != S_OK && res != S_FALSE)
+              return res;
+            if (res == S_OK)
             {
               ArcInfo.Base = (Int64)ArcInfo.MarkerPos;
               // ArcInfo.BaseVolIndex = cdInfo.ThisDisk;
@@ -2228,6 +2253,8 @@ HRESULT CVols::ParseArcName(IArchiveOpenVolumeCallback *volCallback)
   volName += (IsUpperCase ? "ZIP" : "zip");
   
   HRESULT res = volCallback->GetStream(volName, &ZipStream);
+  if (res != S_OK && res != S_FALSE)
+    return res;
   
   if (res == S_FALSE || !ZipStream)
   {
@@ -3331,7 +3358,7 @@ HRESULT CInArchive::Open(IInStream *stream, const UInt64 *searchLimit,
 
     if (res == S_OK)
       MarkerIsFound = true;
-    else if (!IsMultiVol)
+    else if (res != S_FALSE || !IsMultiVol)
     {
       /*
       // if (startPos != 0), probably CD could be already tested with another call with (startPos == 0).

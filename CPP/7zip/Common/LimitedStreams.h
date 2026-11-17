@@ -42,7 +42,15 @@ Z7_CLASS_IMP_IInStream(
   UInt64 _size;
   UInt64 _startOffset;
 
-  HRESULT SeekToPhys() { return InStream_SeekSet(_stream, _physPos); }
+  HRESULT SeekToPhys()
+  {
+    const UInt64 pos = _physPos;
+    _physPos = (UInt64)0 - 1;
+    const HRESULT res = InStream_SeekSet(_stream, pos);
+    if (res == S_OK)
+      _physPos = pos;
+    return res;
+  }
 public:
   void SetStream(IInStream *stream) { _stream = stream; }
   HRESULT InitAndSeek(UInt64 startOffset, UInt64 size)
@@ -72,7 +80,15 @@ public:
   CRecordVector<UInt32> Vector;
   UInt64 StartOffset;
 
-  HRESULT SeekToPhys() { return InStream_SeekSet(Stream, _physPos); }
+  HRESULT SeekToPhys()
+  {
+    const UInt64 pos = _physPos;
+    _physPos = (UInt64)0 - 1;
+    const HRESULT res = InStream_SeekSet(Stream, pos);
+    if (res == S_OK)
+      _physPos = pos;
+    return res;
+  }
 
   HRESULT InitAndSeek()
   {
@@ -82,6 +98,8 @@ public:
     if (Vector.Size())
     {
       _physPos = StartOffset + ((UInt64)Vector[0] << BlockSizeLog);
+      if (_physPos < StartOffset)
+        return HRESULT_WIN32_ERROR_NEGATIVE_SEEK;
       return SeekToPhys();
     }
     return S_OK;
@@ -157,7 +175,7 @@ public:
   {
     _virtPos = 0;
   }
-  HRESULT SeekToStart() { return InStream_SeekSet(Stream, Offset); }
+  HRESULT SeekToStart() { return Seek(0, STREAM_SEEK_SET, NULL); }
 };
 
 
@@ -174,7 +192,15 @@ Z7_CLASS_IMP_IInStream(
   size_t _cacheSize;
   size_t _cachePhyPos;
 
-  HRESULT SeekToPhys() { return InStream_SeekSet(_stream, _physPos); }
+  HRESULT SeekToPhys()
+  {
+    const UInt64 pos = _physPos;
+    _physPos = (UInt64)0 - 1;
+    const HRESULT res = InStream_SeekSet(_stream, pos);
+    if (res == S_OK)
+      _physPos = pos;
+    return res;
+  }
 public:
   CByteBuffer Buffer;
 

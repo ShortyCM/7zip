@@ -145,7 +145,14 @@ void Sha512_Init(CSha512 *p, unsigned digestSize)
 #define Maj(x,y,z) ((x&y)|(z&(x|y)))
 
 
-#define W_PRE(i) (W[(i) + (size_t)(j)] = GetBe64(data + ((size_t)(j) + i) * 8))
+static Z7_FORCE_INLINE UInt64 Sha512_GetBe64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe64(&value);
+}
+
+#define W_PRE(i) (W[(i) + (size_t)(j)] = Sha512_GetBe64(data + ((size_t)(j) + i) * 8))
 
 #define blk2_main(j, i)  s1(w(j, (i)-2)) + w(j, (i)-7) + s0(w(j, (i)-15))
 
@@ -423,14 +430,16 @@ void Sha512_Final(CSha512 *p, Byte *digest, unsigned digestSize)
     unsigned i;
     for (i = 0; i < numWords; i++)
     {
-      const UInt64 v = p->state[i];
-      SetBe64(digest, v)
+      UInt64 encoded;
+      SetBe64(&encoded, p->state[i])
+      memcpy(digest, &encoded, sizeof(encoded));
       digest += 8;
     }
     if (digestSize & 4) // digestSize == SHA512_224_DIGEST_SIZE
     {
-      const UInt32 v = (UInt32)((p->state[numWords]) >> 32);
-      SetBe32(digest, v)
+      UInt32 encoded;
+      SetBe32(&encoded, (UInt32)(p->state[numWords] >> 32))
+      memcpy(digest, &encoded, sizeof(encoded));
     }
   }
 #endif

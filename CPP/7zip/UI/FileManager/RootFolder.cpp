@@ -3,6 +3,7 @@
 #include "StdAfx.h"
 
 #include "../../../Common/MyWindows.h"
+#include "../../../Common/ComTry.h"
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
 #include <shlobj.h>
@@ -102,8 +103,10 @@ void CRootFolder::Init()
 
 Z7_COM7F_IMF(CRootFolder::LoadItems())
 {
+  COM_TRY_BEGIN
   Init();
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CRootFolder::GetNumberOfItems(UInt32 *numItems))
@@ -114,6 +117,7 @@ Z7_COM7F_IMF(CRootFolder::GetNumberOfItems(UInt32 *numItems))
 
 Z7_COM7F_IMF(CRootFolder::GetProperty(UInt32 itemIndex, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -122,6 +126,7 @@ Z7_COM7F_IMF(CRootFolder::GetProperty(UInt32 itemIndex, PROPID propID, PROPVARIA
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 #if !defined(Z7_WIN32_WINNT_MIN) || Z7_WIN32_WINNT_MIN < 0x0400  // nt4
@@ -174,6 +179,7 @@ static UString GetMyDocsPath()
 
 Z7_COM7F_IMF(CRootFolder::BindToFolder(UInt32 index, IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   CMyComPtr<IFolderFolder> subFolder;
 
@@ -213,6 +219,7 @@ Z7_COM7F_IMF(CRootFolder::BindToFolder(UInt32 index, IFolderFolder **resultFolde
 
   *resultFolder = subFolder.Detach();
   return S_OK;
+  COM_TRY_END
 }
 
 static bool AreEqualNames(const UString &path, const wchar_t *name)
@@ -227,6 +234,7 @@ static bool AreEqualNames(const UString &path, const wchar_t *name)
 
 Z7_COM7F_IMF(CRootFolder::BindToFolder(const wchar_t *name, IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   UString name2 = name;
   name2.Trim();
@@ -313,6 +321,7 @@ Z7_COM7F_IMF(CRootFolder::BindToFolder(const wchar_t *name, IFolderFolder **resu
   
   *resultFolder = subFolder.Detach();
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CRootFolder::BindToParentFolder(IFolderFolder **resultFolder))
@@ -325,6 +334,7 @@ IMP_IFolderFolder_Props(CRootFolder)
 
 Z7_COM7F_IMF(CRootFolder::GetFolderProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -333,6 +343,7 @@ Z7_COM7F_IMF(CRootFolder::GetFolderProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CRootFolder::GetSystemIconIndex(UInt32 index, Int32 *iconIndex))

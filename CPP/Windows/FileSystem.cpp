@@ -115,8 +115,11 @@ bool MyGetDiskFreeSpace(CFSTR rootPath, UInt64 &clusterSize, UInt64 &totalSize, 
         GetDiskFreeSpaceExA
 #endif
           (fs2fas(rootPath), &freeBytesToCaller2, &totalSize2, &freeSize2));
-      totalSize = totalSize2.QuadPart;
-      freeSize = freeSize2.QuadPart;
+      if (sizeIsDetected)
+      {
+        totalSize = totalSize2.QuadPart;
+        freeSize = freeSize2.QuadPart;
+      }
     }
     if (!::GetDiskFreeSpace(fs2fas(rootPath), &numSectorsPerCluster, &bytesPerSector, &numFreeClusters, &numClusters))
       return false;
@@ -140,8 +143,11 @@ bool MyGetDiskFreeSpace(CFSTR rootPath, UInt64 &clusterSize, UInt64 &totalSize, 
         GetDiskFreeSpaceExW
 #endif
           (fs2us(rootPath), &freeBytesToCaller2, &totalSize2, &freeSize2));
-      totalSize = totalSize2.QuadPart;
-      freeSize = freeSize2.QuadPart;
+      if (sizeIsDetected)
+      {
+        totalSize = totalSize2.QuadPart;
+        freeSize = freeSize2.QuadPart;
+      }
     }
     if (!::GetDiskFreeSpaceW(fs2us(rootPath), &numSectorsPerCluster, &bytesPerSector, &numFreeClusters, &numClusters))
       return false;

@@ -323,7 +323,7 @@ public:
   ~CExtractCallbackImp();
   void Init();
 
-  HRESULT SetCurrentFilePath2(const wchar_t *filePath);
+  HRESULT SetCurrentFilePath2(const wchar_t *filePath, bool isDir = false);
   void AddError_Message(LPCWSTR message);
   void AddError_Message_ShowArcPath(LPCWSTR message);
   HRESULT MessageError(const char *message, const FString &path);

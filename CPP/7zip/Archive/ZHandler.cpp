@@ -181,7 +181,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
     lps->Init(extractCallback, true);
     RINOK(InStream_SeekToBegin(_stream))
-    const HRESULT hres = NCompress::NZ::Decode(_stream, realOutStream, lps);
+    HRESULT callbackResult;
+    const HRESULT hres = NCompress::NZ::Decode(_stream, realOutStream, lps, callbackResult);
+    RINOK(callbackResult)
     if (hres == S_FALSE)
       opRes = NExtract::NOperationResult::kDataError;
     else

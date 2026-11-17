@@ -104,6 +104,8 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
   bool _packSize_Defined;
   UInt64 _packSize;
   CMyComPtr<ISequentialInStream> _stream;
+  CMyComPtr<IInStream> _inStream;
+  UInt64 _dataStartPosition;
 
   void GetVersion(NCOM::CPropVariant &prop);
 };
@@ -143,6 +145,7 @@ void CHandler::GetVersion(NCOM::CPropVariant &prop)
 
 Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -151,6 +154,7 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -186,19 +190,26 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 /* index */, PROPID propID, PROPVARIAN
 
 Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *, IArchiveOpenCallback *))
 {
-  return OpenSeq(stream);
+  COM_TRY_BEGIN
+  RINOK(OpenSeq(stream))
+  UInt64 dataStartPosition;
+  const HRESULT res = InStream_GetPos(stream, dataStartPosition);
+  if (res != S_OK)
+  {
+    Close();
+    return res;
+  }
+  _dataStartPosition = dataStartPosition;
+  _inStream = stream;
+  return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CHandler::OpenSeq(ISequentialInStream *stream))
 {
   COM_TRY_BEGIN
-  HRESULT res;
-  // try
-  {
-    Close();
-    res = _item.ReadHeader(stream, _headerSize);
-  }
-  // catch(...) { res = S_FALSE; }
+  Close();
+  const HRESULT res = _item.ReadHeader(stream, _headerSize);
   if (res == S_OK)
     _stream = stream;
   else
@@ -213,6 +224,8 @@ Z7_COM7F_IMF(CHandler::Close())
   _packSize = 0;
   _packSize_Defined = false;
   _stream.Release();
+  _inStream.Release();
+  _dataStartPosition = 0;
   return S_OK;
 }
 
@@ -295,6 +308,7 @@ struct CPpmdCpp
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
+  COM_TRY_BEGIN
   if (numItems == 0)
     return S_OK;
   if (numItems != (UInt32)(Int32)-1 && (numItems != 1 || indices[0] != 0))
@@ -331,6 +345,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   if (_item.IsSupported())
   {
+    if (_inStream)
+    {
+      RINOK(InStream_SeekSet(_inStream, _dataStartPosition))
+    }
     CPpmdCpp ppmd(_item.Ver);
     if (!ppmd.Alloc(_item.MemInMB))
       return E_OUTOFMEMORY;
@@ -400,6 +418,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   }
 }
   return extractCallback->SetOperationResult(opRes);
+  COM_TRY_END
 }
 
 

@@ -49,6 +49,7 @@ bool CShellExtInfo::ReadFromRegistry(HKEY hkey, const CSysString &ext)
   ProgramKey.Empty();
   IconPath.Empty();
   IconIndex = -1;
+  IconIndexDefined = false;
   // NSynchronization::CCriticalSectionLock lock(g_CriticalSection);
   {
     CKey extKey;
@@ -73,11 +74,18 @@ bool CShellExtInfo::ReadFromRegistry(HKEY hkey, const CSysString &ext)
           const Int32 index = ConvertStringToInt32((const wchar_t *)value + pos + 1, &end);
           if (*end == 0)
           {
-            // 9.31: if there is no icon index, we use -1. Is it OK?
             if (pos != (int)value.Len() - 1)
+            {
               IconIndex = (int)index;
+              IconIndexDefined = true;
+            }
             IconPath.SetFrom(value, (unsigned)pos);
           }
+        }
+        if (IconPath.Len() >= 2 && IconPath[0] == L'"' && IconPath.Back() == L'"')
+        {
+          IconPath.DeleteFrontal(1);
+          IconPath.DeleteBack();
         }
       }
     }
@@ -110,7 +118,6 @@ LONG AddShellExtensionInfo(HKEY hkey,
     // , const void *shellNewData, int shellNewDataSize
     )
 {
-  LONG res = 0;
   DeleteShellExtensionInfo(hkey, ext);
   // NSynchronization::CCriticalSectionLock lock(g_CriticalSection);
   CSysString programKeyName;
@@ -122,8 +129,8 @@ LONG AddShellExtensionInfo(HKEY hkey,
   }
   {
     CKey extKey;
-    res = extKey.Create(hkey, GetExtKeyPath(hkey, ext));
-    extKey.SetValue(NULL, programKeyName);
+    RINOK(extKey.Create(hkey, GetExtKeyPath(hkey, ext)))
+    RINOK(extKey.SetValue(NULL, programKeyName))
     /*
     if (shellNewData != NULL)
     {
@@ -134,8 +141,8 @@ LONG AddShellExtensionInfo(HKEY hkey,
     */
   }
   CKey programKey;
-  programKey.Create(hkey, GetFullKeyPath(hkey, programKeyName));
-  programKey.SetValue(NULL, programTitle);
+  RINOK(programKey.Create(hkey, GetFullKeyPath(hkey, programKeyName)))
+  RINOK(programKey.SetValue(NULL, programTitle))
   {
     CKey iconKey;
     UString iconPathFull = iconPath;
@@ -146,22 +153,21 @@ LONG AddShellExtensionInfo(HKEY hkey,
       iconPathFull.Add_Char(',');
       iconPathFull.Add_UInt32((UInt32)iconIndex);
     }
-    iconKey.Create(programKey, kDefaultIconKeyName);
-    iconKey.SetValue(NULL, iconPathFull);
+    RINOK(iconKey.Create(programKey, kDefaultIconKeyName))
+    RINOK(iconKey.SetValue(NULL, iconPathFull))
   }
 
   CKey shellKey;
-  shellKey.Create(programKey, kShellKeyName);
-  shellKey.SetValue(NULL, TEXT(""));
+  RINOK(shellKey.Create(programKey, kShellKeyName))
+  RINOK(shellKey.SetValue(NULL, TEXT("")))
 
   CKey openKey;
-  openKey.Create(shellKey, kOpenKeyName);
-  openKey.SetValue(NULL, TEXT(""));
+  RINOK(openKey.Create(shellKey, kOpenKeyName))
+  RINOK(openKey.SetValue(NULL, TEXT("")))
   
   CKey commandKey;
-  commandKey.Create(openKey, kCommandKeyName);
-  commandKey.SetValue(NULL, programOpenCommand);
-  return res;
+  RINOK(commandKey.Create(openKey, kCommandKeyName))
+  return commandKey.SetValue(NULL, programOpenCommand);
 }
 
 }

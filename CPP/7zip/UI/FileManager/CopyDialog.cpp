@@ -2,9 +2,12 @@
 
 #include "StdAfx.h"
 
+#include "../../../Windows/ErrorMsg.h"
 #include "../../../Windows/FileName.h"
 
 #include "../../../Windows/Control/Static.h"
+
+#include "../Explorer/MyMessages.h"
 
 #include "BrowseDialog.h"
 #include "CopyDialog.h"
@@ -84,7 +87,12 @@ bool CCopyDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 void CCopyDialog::OnButtonSetPath()
 {
   UString currentPath;
-  _path.GetText(currentPath);
+  if (!_path.GetText(currentPath))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
 
   const UString title = LangString(IDS_SET_FOLDER);
 
@@ -98,6 +106,13 @@ void CCopyDialog::OnButtonSetPath()
 
 void CCopyDialog::OnOK()
 {
-  _path.GetText(Value);
+  UString value;
+  if (!_path.GetText(value))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
+  Value = value;
   CModalDialog::OnOK();
 }

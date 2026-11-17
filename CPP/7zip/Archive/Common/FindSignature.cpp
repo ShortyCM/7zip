@@ -34,7 +34,14 @@ HRESULT FindSignatureInStream(ISequentialInStream *stream,
         return S_FALSE;
     do
     {
-      const size_t numReadBytes = kBufferSize - numPrevBytes;
+      size_t numReadBytes = kBufferSize - numPrevBytes;
+      if (limit)
+      {
+        const UInt64 rem = *limit - resPos;
+        const size_t numRequired = signatureSize - numPrevBytes;
+        if (rem < numReadBytes - numRequired)
+          numReadBytes = (size_t)rem + numRequired;
+      }
       UInt32 processedSize;
       RINOK(stream->Read(buffer + numPrevBytes, (UInt32)numReadBytes, &processedSize))
       numPrevBytes += (size_t)processedSize;

@@ -65,7 +65,7 @@ struct CItem
   UInt32 inode;
   unsigned MainIndex_ForInode;
   UInt32 Mode;
-  UInt32 MTime;
+  UInt64 MTime;
   UInt32 DevMajor;
   UInt32 DevMinor;
   UInt64 Size;
@@ -386,13 +386,7 @@ HRESULT CInArchive::GetNextItem()
       READ_OCT_6 (4 * 6, item.GID)
       READ_OCT_6 (5 * 6, item.NumLinks)
       READ_OCT_6 (6 * 6, item.RDevMinor)
-      {
-        UInt64 mTime64;
-        READ_OCT_11 (7 * 6, mTime64)
-        item.MTime = 0;
-        if (mTime64 <= (UInt32)(Int32)-1)
-          item.MTime = (UInt32)mTime64;
-      }
+      READ_OCT_11 (7 * 6, item.MTime)
       READ_OCT_6 (7 * 6 + 11, nameSize)
       READ_OCT_11 (8 * 6 + 11, item.Size)  // ?????
 
@@ -903,7 +897,11 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
     case kpidMTime:
     {
       if (item.MTime != 0)
-        PropVariant_SetFrom_UnixTime(prop, item.MTime);
+      {
+        FILETIME ft;
+        if (NTime::UnixTime64_To_FileTime((Int64)item.MTime, ft))
+          prop.SetAsTimeFrom_FT_Prec(ft, k_PropVar_TimePrec_Unix);
+      }
       break;
     }
     case kpidPosixAttrib: prop = item.Mode; break;

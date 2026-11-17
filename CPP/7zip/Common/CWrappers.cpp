@@ -147,8 +147,10 @@ static SRes InStreamWrap_Seek(ISeekInStreamPtr pp, Int64 *offset, ESzSeek origin
   }
   UInt64 newPosition;
   p->Res = p->Stream->Seek(*offset, moveMethod, &newPosition);
+  if (p->Res != S_OK)
+    return SZ_ERROR_READ;
   *offset = (Int64)newPosition;
-  return (p->Res == S_OK) ? SZ_OK : SZ_ERROR_READ;
+  return SZ_OK;
 }
 
 void CSeekInStreamWrap::Init(IInStream *stream) throw()

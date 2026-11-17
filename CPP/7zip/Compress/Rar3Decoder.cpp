@@ -36,32 +36,32 @@ static const UInt32 kNormalMatchMinLen = 3;
 static const UInt32 kVmDataSizeMax = 1 << 16;
 static const UInt32 kVmCodeSizeMax = 1 << 16;
 
+static Byte ReadByte(CByteIn *p, bool aligned) throw()
+{
+  if (p->hresult != S_OK)
+    return 0xFF;
+  try
+  {
+    return aligned ? (Byte)p->BitDecoder.ReadByteFromAligned() : p->BitDecoder.Stream.ReadByte();
+  }
+  catch (const CInBufferException &e) { p->hresult = e.ErrorCode; }
+  catch (...) { p->hresult = S_FALSE; }
+  p->BitDecoder.Stream.NumExtraBytes = 3;
+  return 0xFF;
+}
+
 extern "C" {
 
 static Byte Wrap_ReadByte(IByteInPtr pp) throw()
 {
   CByteIn *p = Z7_CONTAINER_FROM_VTBL_CLS(pp, CByteIn, IByteIn_obj);
-  try
-  {
-    return p->BitDecoder.Stream.ReadByte();
-  }
-  catch(const CInBufferException &e) { p->hresult = e.ErrorCode; }
-  catch(...) {}
-  p->BitDecoder.Stream.NumExtraBytes++;
-  return 0xFF;
+  return ReadByte(p, false);
 }
 
 static Byte Wrap_ReadBits8(IByteInPtr pp) throw()
 {
   CByteIn *p = Z7_CONTAINER_FROM_VTBL_CLS(pp, CByteIn, IByteIn_obj);
-  try
-  {
-    return (Byte)p->BitDecoder.ReadByteFromAligned();
-  }
-  catch(const CInBufferException &e) { p->hresult = e.ErrorCode; }
-  catch(...) {}
-  p->BitDecoder.Stream.NumExtraBytes++;
-  return 0xFF;
+  return ReadByte(p, true);
 }
 
 }
@@ -188,8 +188,7 @@ HRESULT CDecoder::WriteBuf()
           _vm.SetMemory(0, _vm.GetDataPointer(outBlockRef.Offset), outBlockRef.Size);
           ExecuteFilter(++i, outBlockRef);
         }
-        WriteDataToStream(_vm.GetDataPointer(outBlockRef.Offset), outBlockRef.Size);
-        _writtenFileSize += outBlockRef.Size;
+        RINOK(WriteData(_vm.GetDataPointer(outBlockRef.Offset), outBlockRef.Size))
         writtenBorder = blockEnd;
         writeSize = (_winPos - writtenBorder) & kWindowMask;
       }
@@ -361,8 +360,13 @@ bool CDecoder::ReadVmCodeLZ()
 }
 
 
-// int CDecoder::DecodePpmSymbol() { return Ppmd7a_DecodeSymbol(&_ppmd); }
-#define DecodePpmSymbol() Ppmd7a_DecodeSymbol(&_ppmd)
+int CDecoder::DecodePpmSymbol()
+{
+  if (m_InBitStream.hresult != S_OK)
+    return -1;
+  const int symbol = Ppmd7a_DecodeSymbol(&_ppmd);
+  return m_InBitStream.hresult == S_OK ? symbol : -1;
+}
 
 
 bool CDecoder::ReadVmCodePPM()
@@ -424,12 +428,16 @@ HRESULT CDecoder::InitPPM()
   if (maxOrder & 0x40)
     PpmEscChar = (Byte)Wrap_ReadBits8(&m_InBitStream.IByteIn_obj);
 
+  RINOK(m_InBitStream.hresult)
+
   _ppmd.rc.dec.Stream = &m_InBitStream.IByteIn_obj;
   m_InBitStream.IByteIn_obj.Read = Wrap_ReadBits8;
 
   Ppmd7a_RangeDec_Init(&_ppmd.rc.dec);
 
   m_InBitStream.IByteIn_obj.Read = Wrap_ReadByte;
+
+  RINOK(m_InBitStream.hresult)
 
   if (reset)
   {
@@ -822,7 +830,7 @@ HRESULT CDecoder::DecodeLZ(bool &keepDecompressing)
 }
 
 
-HRESULT CDecoder::CodeReal(ICompressProgressInfo *progress)
+HRESULT CDecoder::CodeReal(ICompressProgressInfo *progress, bool outSizeDefined)
 {
   _writtenFileSize = 0;
   _unsupportedFilter = false;
@@ -877,7 +885,10 @@ HRESULT CDecoder::CodeReal(ICompressProgressInfo *progress)
       return S_FALSE;
 
     const UInt64 packSize = m_InBitStream.BitDecoder.GetProcessedSize();
-    RINOK(progress->SetRatioInfo(&packSize, &_writtenFileSize))
+    if (progress)
+    {
+      RINOK(progress->SetRatioInfo(&packSize, &_writtenFileSize))
+    }
     if (!keepDecompressing)
       break;
   }
@@ -886,8 +897,11 @@ HRESULT CDecoder::CodeReal(ICompressProgressInfo *progress)
 
   RINOK(WriteBuf())
   const UInt64 packSize = m_InBitStream.BitDecoder.GetProcessedSize();
-  RINOK(progress->SetRatioInfo(&packSize, &_writtenFileSize))
-  if (_writtenFileSize < _unpackSize)
+  if (progress)
+  {
+    RINOK(progress->SetRatioInfo(&packSize, &_writtenFileSize))
+  }
+  if (outSizeDefined && _writtenFileSize < _unpackSize)
     return S_FALSE;
 
   if (_unsupportedFilter)
@@ -897,13 +911,10 @@ HRESULT CDecoder::CodeReal(ICompressProgressInfo *progress)
 }
 
 Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStream,
-    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress))
+    const UInt64 * /* inSize */, const UInt64 *outSize, ICompressProgressInfo *progress))
 {
   try
   {
-    if (!inSize)
-      return E_INVALIDARG;
-
     if (_isSolid && !_solidAllowed)
       return S_FALSE;
     _solidAllowed = false;
@@ -934,10 +945,8 @@ Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream 
    
     // CCoderReleaser coderReleaser(this);
     _unpackSize = outSize ? *outSize : (UInt64)(Int64)-1;
-    HRESULT res = CodeReal(progress);
-    if (m_InBitStream.hresult != S_OK)
-      res = m_InBitStream.hresult;
-    return res;
+    const HRESULT result = CodeReal(progress, outSize != NULL);
+    return m_InBitStream.hresult != S_OK ? m_InBitStream.hresult : result;
   }
   catch(const CInBufferException &e)  { /* _errorMode = true; */ return e.ErrorCode; }
   catch(...) { /* _errorMode = true; */ return S_FALSE; }

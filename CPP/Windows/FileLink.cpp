@@ -521,13 +521,21 @@ namespace NIO {
 
 bool GetReparseData(CFSTR path, CByteBuffer &reparseData, BY_HANDLE_FILE_INFORMATION *fileInfo)
 {
+  bool fileInfoDefined;
+  return GetReparseData(path, reparseData, fileInfo, fileInfoDefined);
+}
+
+bool GetReparseData(CFSTR path, CByteBuffer &reparseData,
+    BY_HANDLE_FILE_INFORMATION *fileInfo, bool &fileInfoDefined)
+{
+  fileInfoDefined = false;
   reparseData.Free();
   CInFile file;
   if (!file.OpenReparse(path))
     return false;
 
   if (fileInfo)
-    file.GetFileInformation(fileInfo);
+    fileInfoDefined = file.GetFileInformation(fileInfo);
 
   const unsigned kBufSize = MAXIMUM_REPARSE_DATA_BUFFER_SIZE;
   CByteArr buf(kBufSize);

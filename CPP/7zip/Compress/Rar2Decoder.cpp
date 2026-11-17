@@ -26,7 +26,7 @@ Byte CFilter::Decode(int &channelDelta, Byte deltaByte)
   const Byte realValue = (Byte)(predictedValue - deltaByte);
   
   {
-    const int i = ((int)(signed char)deltaByte) << 3;
+    const int i = (int)(signed char)deltaByte * 8;
 
     Dif[0] += my_abs(i);
     Dif[1] += my_abs(i - D1);
@@ -216,7 +216,7 @@ bool CDecoder::ReadTables(void)
     RIF(m_LenDecoder.Build(&lens[kMainTableSize + kDistTableSize]))
   }
   
-  memcpy(m_LastLevels, lens, kMaxTableSize);
+  memcpy(m_LastLevels, lens, numLevels);
 
   m_TablesOK = true;
   return true;
@@ -283,7 +283,7 @@ static inline CLenType SlotToLen(CBitDecoder &_bitStream, CLenType slot)
   return ((4 | (slot & 3)) << numBits) + (CLenType)_bitStream.ReadBits(numBits);
 }
 
-bool CDecoder::DecodeLz(Int32 pos)
+bool CDecoder::DecodeLz(Int32 pos, UInt64 rem)
 {
   while (pos > 0)
   {
@@ -295,6 +295,7 @@ bool CDecoder::DecodeLz(Int32 pos)
     {
       m_OutWindowStream.PutByte(Byte(sym));
       pos--;
+      rem--;
       continue;
     }
     else if (sym >= kMatchNumber)
@@ -357,11 +358,15 @@ bool CDecoder::DecodeLz(Int32 pos)
     else // (sym == kReadTableNumber)
       return true;
 
+    if (len > rem || m_InBitStream.ExtraBitsWereRead())
+      return false;
+
     m_RepDists[m_RepDistPtr++ & 3] = distance;
     m_LastLength = len;
     if (!m_OutWindowStream.CopyBlock(distance, len))
       return false;
     pos -= len;
+    rem -= len;
   }
   return true;
 }
@@ -422,7 +427,7 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
     }
     else
     {
-      if (!DecodeLz((Int32)blockSize))
+      if (!DecodeLz((Int32)blockSize, unPackSize - pos))
         return S_FALSE;
     }
 

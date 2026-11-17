@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../C/CpuArch.h"
 
 #include "../../Common/ComTry.h"
@@ -13,9 +15,6 @@
 #include "../Common/StreamUtils.h"
 
 #include "HandlerCont.h"
-
-#define Get32(p) GetBe32(p)
-#define Get64(p) GetBe64(p)
 
 #define G32(_offs_, dest) dest = Get32(p + (_offs_))
 #define G64(_offs_, dest) dest = Get64(p + (_offs_))
@@ -29,6 +28,20 @@ API_FUNC_IsArc IsArc_Ext_PhySize(const Byte *p, size_t size, UInt64 *phySize);
 }
 
 namespace NAvb {
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe64(&value);
+}
 
 static bool AddNameToString(AString &s, const Byte *name, unsigned size)
 {
@@ -489,8 +502,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream,
   Close();
   try
   {
-    if (Open2(stream) != S_OK)
-      return S_FALSE;
+    RINOK(Open2(stream))
     _stream = stream;
 
     {

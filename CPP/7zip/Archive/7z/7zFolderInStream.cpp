@@ -170,7 +170,7 @@ Z7_COM7F_IMF(CFolderInStream::Read(void *data, UInt32 size, UInt32 *processedSiz
       const UInt32 kMax = (UInt32)1 << 20;
       if (cur > kMax)
         cur = kMax;
-      RINOK(_stream->Read(data, cur, &cur))
+      const HRESULT result = _stream->Read(data, cur, &cur);
       if (cur != 0)
       {
         // if (Need_Crc)
@@ -183,8 +183,9 @@ Z7_COM7F_IMF(CFolderInStream::Read(void *data, UInt32 size, UInt32 *processedSiz
         _totalSize_for_Coder += cur;
         if (processedSize)
           *processedSize = cur; // use +=cur, if continue is possible in loop
-        return S_OK;
+        return result;
       }
+      RINOK(result)
       
       _stream.Release();
       RINOK(AddFileInfo(true))

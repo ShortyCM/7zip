@@ -643,7 +643,16 @@ HRESULT CBrowseDialog::Reload(const UString &pathPrefix, const UString &selected
 
   SetItemText(IDT_BROWSE_FOLDER, DirPrefix);
 
-  _list.SetRedraw(false);
+  struct CRedrawGuard
+  {
+    NControl::CListView &List;
+    CRedrawGuard(NControl::CListView &list): List(list) { List.SetRedraw(false); }
+    ~CRedrawGuard()
+    {
+      List.SetRedraw(true);
+      List.InvalidateRect(NULL, true);
+    }
+  } redrawGuard(_list);
   _list.DeleteAllItems();
 
   LVITEMW item;
@@ -727,8 +736,6 @@ HRESULT CBrowseDialog::Reload(const UString &pathPrefix, const UString &selected
   if (_list.GetItemCount() > 0 && cursorIndex < 0)
     _list.SetItemState(0, LVIS_FOCUSED, LVIS_FOCUSED);
   _list.EnsureVisible(_list.GetFocusedItem(), false);
-  _list.SetRedraw(true);
-  _list.InvalidateRect(NULL, true);
   return S_OK;
 }
 

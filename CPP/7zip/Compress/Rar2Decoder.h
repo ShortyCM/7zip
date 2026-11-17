@@ -97,7 +97,7 @@ Z7_CLASS_IMP_NOQIB_2(
   bool ReadLastTables();
 
   bool DecodeMm(UInt32 pos);
-  bool DecodeLz(Int32 pos);
+  bool DecodeLz(Int32 pos, UInt64 rem);
 
   HRESULT CodeReal(ISequentialInStream *inStream, ISequentialOutStream *outStream,
       const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress);

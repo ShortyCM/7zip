@@ -31,7 +31,7 @@ static const char * const g_Message_FileWriteError = "File write error";
 struct CVolSeqName
 {
   FString Extension;
-  
+
   CVolSeqName(UInt64 numVolumes)
   {
     Extension = "00";
@@ -42,7 +42,7 @@ struct CVolSeqName
     }
     while (numVolumes > 99);
   }
-  
+
   void PrepareNextName()
   {
     unsigned i = Extension.Len();
@@ -87,12 +87,12 @@ public:
     SetCorrectFileLength();
   }
 
-  void PreAlloc(UInt64 preAllocSize)
+  bool PreAlloc(UInt64 preAllocSize)
   {
     _preAllocSize = 0;
     if (File.SetLength(preAllocSize))
       _preAllocSize = preAllocSize;
-    File.SeekToBegin();
+    return File.SeekToBegin();
   }
 
   bool Write(const void *data, UInt32 size, UInt32 &processedSize) throw()
@@ -102,21 +102,26 @@ public:
     return res;
   }
 
-  void Close()
+  bool Close()
   {
-    SetCorrectFileLength();
-    _preAllocSize = 0;
+    if (!SetCorrectFileLength())
+      return false;
+    if (!File.Close())
+      return false;
     Written = 0;
-    File.Close();
+    _preAllocSize = 0;
+    return true;
   }
 
-  void SetCorrectFileLength()
+  bool SetCorrectFileLength()
   {
     if (Written < _preAllocSize)
     {
-      File.SetLength(Written);
+      if (!File.SetLength(Written))
+        return false;
       _preAllocSize = 0;
     }
+    return true;
   }
 };
 
@@ -158,12 +163,19 @@ HRESULT CThreadSplit::ProcessVirt()
         needSize = (UInt32)rem;
     }
     {
-      UInt32 processedSize = 0;
-      if (!inFile.Read(buffer, needSize, processedSize))
+    UInt32 processedSize;
+    if (!inFile.Read(buffer, needSize, processedSize))
+      return GetLastError_noZero_HRESULT();
+    if (processedSize == 0)
+    {
+      const bool isPartialVolume = (outFile.Written != 0);
+      if (!outFile.Close())
         return GetLastError_noZero_HRESULT();
-      if (processedSize == 0)
-        break;
-      needSize = processedSize;
+      if (isPartialVolume)
+        sync.Set_NumFilesCur(++numFiles);
+      return sync.Set_NumBytesCur(pos);
+    }
+    needSize = processedSize;
     }
   
     if (outFile.Written == 0)
@@ -186,7 +198,8 @@ HRESULT CThreadSplit::ProcessVirt()
         if (expectSize > rem)
           expectSize = rem;
       }
-      outFile.PreAlloc(expectSize);
+      if (!outFile.PreAlloc(expectSize))
+        return GetLastError_noZero_HRESULT();
     }
 
     {
@@ -200,7 +213,8 @@ HRESULT CThreadSplit::ProcessVirt()
     
     if (outFile.Written == volSize)
     {
-      outFile.Close();
+      if (!outFile.Close())
+        return GetLastError_noZero_HRESULT();
       sync.Set_NumFilesCur(++numFiles);
       if (volIndex + 1 < VolumeSizes.Size())
         volIndex++;
@@ -418,6 +432,12 @@ HRESULT CThreadCombine::ProcessVirt()
       pos += processedSize;
       RINOK(sync.Set_NumBytesCur(pos))
     }
+  }
+  if (!outFile.Close())
+  {
+    const HRESULT res = GetLastError_noZero_HRESULT();
+    AddErrorPath(OutputPath);
+    return res;
   }
   return S_OK;
 }

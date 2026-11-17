@@ -18,6 +18,8 @@ bool ParseSizeString(const wchar_t *s, const PROPVARIANT &prop, UInt64 percentsB
       case VT_UI8: res = prop.uhVal.QuadPart; return true;
       case VT_BSTR:
         s = prop.bstrVal;
+        if (!s)
+          return false;
         break;
       default: return false;
     }
@@ -265,7 +267,7 @@ HRESULT CSingleMethodProps::SetProperty(const wchar_t *name2, const PROPVARIANT 
     if (SetCommonProperty(name, value, hres))
     {
       // processed = true;
-      return S_OK;
+      return hres;
     }
   }
   RINOK(ParseMethodFromPROPVARIANT(name, value))

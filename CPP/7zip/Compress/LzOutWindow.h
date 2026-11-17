@@ -17,6 +17,8 @@ public:
   // distance >= 0, len > 0,
   bool CopyBlock(UInt32 distance, UInt32 len)
   {
+    if (!PrepareToWrite())
+      return true;
     UInt32 pos = _pos - distance - 1;
     if (distance >= _pos)
     {
@@ -41,8 +43,8 @@ public:
       pos2 = _pos;
       _buf[pos2++] = _buf[pos++];
       _pos = pos2;
-      if (pos2 == _limitPos)
-        FlushWithCheck();
+      if (pos2 == _limitPos && !PrepareToWrite())
+        return true;
     }
     while (--len != 0);
     return true;
@@ -50,16 +52,14 @@ public:
   
   void PutByte(Byte b)
   {
-    UInt32 pos = _pos;
-    _buf[pos++] = b;
-    _pos = pos;
-    if (pos == _limitPos)
-      FlushWithCheck();
+    WriteByte(b);
   }
 
   void PutBytes(const Byte *data, UInt32 size)
   {
     if (size == 0)
+      return;
+    if (!PrepareToWrite())
       return;
     UInt32 pos = _pos;
     Byte *buf = _buf;
@@ -72,7 +72,8 @@ public:
       if (rem == 0)
       {
         _pos = pos;
-        FlushWithCheck();
+        if (!PrepareToWrite())
+          return;
         pos = _pos;
         continue;
       }

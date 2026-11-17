@@ -5,6 +5,7 @@
 
 #include "../../../Common/MyTypes.h"
 #include "../../../Common/MyString.h"
+#include "../../../Common/MyWindows.h"
 
 #include "../../Common/MethodProps.h"
 
@@ -44,7 +45,7 @@ namespace NExtract
   void Save_ShowPassword(bool showPassword);
   bool Read_ShowPassword();
 
-  void Save_LimitGB(UInt32 limit_GB);
+  LONG Save_LimitGB(UInt32 limit_GB);
   UInt32 Read_LimitGB();
 }
 
@@ -181,7 +182,7 @@ namespace NWorkDir
       SetForRemovableOnlyDefault();
     }
 
-    void Save() const;
+    LONG Save() const;
     void Load();
   };
 }
@@ -205,7 +206,7 @@ struct CContextMenuInfo
       {}
   */
 
-  void Save() const;
+  LONG Save() const;
   void Load();
 };
 

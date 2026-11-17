@@ -376,9 +376,9 @@ void CDecoder::CorrHuff(UInt32 *CharSet, UInt32 *NumToPlace)
 
 
 HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *outStream,
-    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo * /* progress */)
+    const UInt64 * /* inSize */, const UInt64 *outSize, ICompressProgressInfo * /* progress */)
 {
-  if (!inSize || !outSize)
+  if (!outSize)
     return E_INVALIDARG;
 
   if (_isSolid && !_solidAllowed)
@@ -446,6 +446,9 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
 
   while (m_UnpackSize != 0)
   {
+    if (m_InBitStream.ExtraBitsWereRead())
+      return S_FALSE;
+
     if (!StMode)
     {
       if (--FlagsCnt < 0)
@@ -493,6 +496,9 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
     RINOK(HuffDecode())
   }
   
+  if (*outSize != 0 && m_InBitStream.ExtraBitsWereRead())
+    return S_FALSE;
+
   _solidAllowed = true;
   return m_OutWindowStream.Flush();
 }

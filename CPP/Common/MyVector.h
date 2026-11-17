@@ -520,8 +520,16 @@ public:
   {
     const unsigned size = v.Size();
     _v.ConstructReserve(size);
-    for (unsigned i = 0; i < size; i++)
-      AddInReserved(v[i]);
+    try
+    {
+      for (unsigned i = 0; i < size; i++)
+        AddInReserved(v[i]);
+    }
+    catch (...)
+    {
+      Clear();
+      throw;
+    }
   }
   CObjectVector& operator=(const CObjectVector &v)
   {

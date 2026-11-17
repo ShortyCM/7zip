@@ -346,8 +346,9 @@ HRESULT CHandler::ReadPhy_noCheckLimit(const UInt64 offset, void *data, const si
 {
   if (offset != _posInArc)
   {
-    _posInArc = offset;
+    Reset_PosInArc();
     RINOK(Seek2(offset))
+    _posInArc = offset;
   }
   HRESULT res = ReadStream_FALSE(Stream, data, size);
   if (res == S_OK)
@@ -924,7 +925,7 @@ HRESULT CHandler::Open2(IInStream * const stream, IArchiveOpenCallback * const o
     HRESULT res = handler->Open3();
     if (res != S_OK)
     {
-      if (!child)
+      if (!child || res != S_FALSE)
         return res;
       message = "Parent volume parsing error";
       break;
@@ -986,6 +987,8 @@ HRESULT CHandler::Open2(IInStream * const stream, IArchiveOpenCallback * const o
     name = &temp;
 #endif
     res = openVolumeCallback->GetStream(*name, &nextStream);
+    if (res != S_OK && res != S_FALSE)
+      return res;
     
     if (res == S_FALSE || !nextStream)
     {
@@ -1014,6 +1017,8 @@ HRESULT CHandler::Open2(IInStream * const stream, IArchiveOpenCallback * const o
       }
     }
       
+    if (res != S_OK && res != S_FALSE)
+      return res;
     if (res != S_OK || !nextStream)
     {
       message = res == S_FALSE ? "Missing volume" : "Volume open error";

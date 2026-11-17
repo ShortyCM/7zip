@@ -338,7 +338,7 @@ public:
     IgnoreSplit(false)
     {}
 
-  HRESULT ReadBasicProps(IInArchive *archive, UInt64 startPos, HRESULT openRes);
+  HRESULT ReadBasicProps(IInArchive *archive, UInt64 startPos, HRESULT openRes, bool fileSizeDefined);
 
   HRESULT Close()
   {

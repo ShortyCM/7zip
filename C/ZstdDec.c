@@ -16,6 +16,41 @@ This source code is licensed under BSD 3-Clause License.
 #include "ZstdDec.h"
 #include "CpuArch.h"
 
+static Z7_FORCE_INLINE UInt16 Zstd_GetUi16(const void *data)
+{
+  UInt16 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Zstd_GetUi32(const void *data)
+{
+  UInt32 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Zstd_GetUi64(const void *data)
+{
+  UInt64 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi64(&value);
+}
+
+static Z7_FORCE_INLINE void Zstd_Copy4(void *dest, const void *src)
+{
+  UInt32 value;
+  memcpy(&value, src, sizeof(value));
+  memcpy(dest, &value, sizeof(value));
+}
+
+static Z7_FORCE_INLINE void Zstd_Copy8(void *dest, const void *src)
+{
+  UInt64 value;
+  memcpy(&value, src, sizeof(value));
+  memcpy(dest, &value, sizeof(value));
+}
+
 #if defined(MY_CPU_ARM64)
 #include <arm_neon.h>
 #endif
@@ -552,8 +587,8 @@ static void Print_Predef(unsigned predefAccuracy,
 #endif
 
 
-#define GET16(dest, p)  { const Byte *ptr = p;  dest = GetUi16(ptr); }
-#define GET32(dest, p)  { const Byte *ptr = p;  dest = GetUi32(ptr); }
+#define GET16(dest, p)  { const Byte *ptr = p;  dest = Zstd_GetUi16(ptr); }
+#define GET32(dest, p)  { const Byte *ptr = p;  dest = Zstd_GetUi32(ptr); }
 
 // (1 <= numBits <= 9)
 #define FORWARD_READ_BITS(destVal, numBits, mask) \
@@ -947,10 +982,10 @@ SRes Huf_Decompress_4stream(const Byte * const
  #endif
   UInt32 sizes[3];
   const size_t delta = (destLen + 3) / 4;
-  if ((sizes[0] = GetUi16(src + (0 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
-  if ((sizes[1] = GetUi16(src + (2 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
+  if ((sizes[0] = Zstd_GetUi16(src + (0 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
+  if ((sizes[1] = Zstd_GetUi16(src + (2 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
   sizes[1] += sizes[0];
-  if ((sizes[2] = GetUi16(src + (4 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
+  if ((sizes[2] = Zstd_GetUi16(src + (4 + HUF_SRC_OFFSET - 6))) == 0) return SZ_ERROR_DATA;
   sizes[2] += sizes[1];
   srcLen -= 6;
   if (srcLen <= sizes[2])
@@ -1416,8 +1451,8 @@ static void ZstdDec1_Init(CZstdDec1 *p)
 
     #define COPY_CHUNK_4_2(dest, src) \
     { \
-      ((UInt32 *)(void *)dest)[0] = ((const UInt32 *)(const void *)src)[0]; \
-      ((UInt32 *)(void *)dest)[1] = ((const UInt32 *)(const void *)src)[1]; \
+      Zstd_Copy4(dest, src); \
+      Zstd_Copy4(dest + 4, src + 4); \
       src += 4 * 2; \
       dest += 4 * 2; \
     }
@@ -1477,8 +1512,8 @@ static void ZstdDec1_Init(CZstdDec1 *p)
 
     #define COPY_CHUNK(dest, src) \
     { \
-      ((UInt64 *)(void *)dest)[0] = ((const UInt64 *)(const void *)src)[0]; \
-      ((UInt64 *)(void *)dest)[1] = ((const UInt64 *)(const void *)src)[1]; \
+      Zstd_Copy8(dest, src); \
+      Zstd_Copy8(dest + 8, src + 8); \
       src += 8 * 2; \
       dest += 8 * 2; \
     }
@@ -1666,8 +1701,8 @@ void CopyMatch(size_t offset, size_t len,
           Z7_PRAGMA_OPT_DISABLE_LOOP_UNROLL_VECTORIZE
           do
           {
-            ((UInt64 *)(void *)dest)[0] = v64;
-            ((UInt64 *)(void *)dest)[1] = v64;
+            Zstd_Copy8(dest, &v64);
+            Zstd_Copy8(dest + 8, &v64);
             dest += 16;
           }
           while (len -= 16);
@@ -1679,11 +1714,11 @@ void CopyMatch(size_t offset, size_t len,
           v |= v << 16;
           do
           {
-            ((UInt32 *)(void *)dest)[0] = v;
-            ((UInt32 *)(void *)dest)[1] = v;
+            Zstd_Copy4(dest, &v);
+            Zstd_Copy4(dest + 4, &v);
             dest += 8;
-            ((UInt32 *)(void *)dest)[0] = v;
-            ((UInt32 *)(void *)dest)[1] = v;
+            Zstd_Copy4(dest, &v);
+            Zstd_Copy4(dest + 4, &v);
             dest += 8;
           }
           while (len -= 16);
@@ -1853,7 +1888,7 @@ void CopyMatch(size_t offset, size_t len,
 
 #ifdef Z7_ZSTD_DEC_USE_64BIT_LOADS
 
-#define GET64(dest, p)  { const Byte *ptr = p;  dest = GetUi64(ptr); }
+#define GET64(dest, p)  { const Byte *ptr = p;  dest = Zstd_GetUi64(ptr); }
 
 #define FSE_PRELOAD \
 { \
@@ -2329,7 +2364,7 @@ SRes ZstdDec1_DecodeBlock(CZstdDec1 *p,
         if (inSize < 1 + 1) // we need at least 1 byte here and 1 byte for (numSeqs).
           return SZ_ERROR_DATA;
         numLits >>= 1;
-        v = GetUi16(src);
+        v = Zstd_GetUi16(src);
         src += 2;
         inSize -= 2;
         if ((b0 & 8) == 0)
@@ -2352,10 +2387,10 @@ SRes ZstdDec1_DecodeBlock(CZstdDec1 *p,
       const unsigned numBytes = (3 * mode4Streams + 32) >> 4;
       const unsigned numBits = 4 * numBytes - 2;
       const UInt32 mask = ((UInt32)16 << numBits) - 1;
-      compressedSize = GetUi32(src);
+      compressedSize = Zstd_GetUi32(src);
       numLits = ((
           #ifdef MY_CPU_LE_UNALIGN
-            GetUi32(src - 1)
+            Zstd_GetUi32(src - 1)
           #else
             ((compressedSize << 8) + b0)
           #endif
@@ -2650,7 +2685,7 @@ static size_t ZstdDec1_NeedTempBufferForInput(
       if (inSize < 3)
         return 0;
       numLits >>= 1;
-      v = GetUi16(src + 1);
+      v = Zstd_GetUi16(src + 1);
       pos = 3;
       if ((b0 & 8) == 0)
       {
@@ -2670,7 +2705,7 @@ static size_t ZstdDec1_NeedTempBufferForInput(
     const unsigned mode4Streams = b0 & 0xc;
     const unsigned numBytes = (3 * mode4Streams + 48) >> 4;
     const unsigned numBits = 4 * numBytes - 6;
-    UInt32 cs = GetUi32(src + 1);
+    UInt32 cs = Zstd_GetUi32(src + 1);
     cs >>= numBits;
     cs &= ((UInt32)16 << numBits) - 1;
     if (cs == 0)
@@ -2925,7 +2960,7 @@ static EZstd2State ZstdDec_UpdateState(CZstdDec * const p, const Byte b, CZstdDe
     if (tempSize < 3)
       return ZSTD2_STATE_BLOCK;
     {
-      UInt32 b0 = GetUi32(p->temp);
+      UInt32 b0 = Zstd_GetUi32(p->temp);
       const unsigned type = ((unsigned)b0 >> 1) & 3;
       if (type == kBlockType_RLE && tempSize == 3)
         return ZSTD2_STATE_BLOCK;
@@ -2992,7 +3027,7 @@ static EZstd2State ZstdDec_UpdateState(CZstdDec * const p, const Byte b, CZstdDe
     UInt32 v;
     if (tempSize != 4)
       return p->frameState;
-    v = GetUi32(p->temp);
+    v = Zstd_GetUi32(p->temp);
     if ((unsigned)p->frameState < ZSTD2_STATE_HASH) // == ZSTD2_STATE_SIGNATURE
     {
       if (v == 0xfd2fb528)
@@ -3097,7 +3132,7 @@ static EZstd2State ZstdDec_UpdateState(CZstdDec * const p, const Byte b, CZstdDe
       if (n)
       {
         n = 1u << (n - 1);
-        d = GetUi32(h) & ((UInt32)(Int32)-1 >> (32 - 8u * n));
+        d = Zstd_GetUi32(h) & ((UInt32)(Int32)-1 >> (32 - 8u * n));
         h += n;
       }
       p->dictionaryId = d;
@@ -3118,7 +3153,7 @@ static EZstd2State ZstdDec_UpdateState(CZstdDec * const p, const Byte b, CZstdDe
         n >>= 1;
         if (n == 1)
           v = 256;
-        v += GetUi64(h) & ((UInt64)(Int64)-1 >> (64 - (8u << n)));
+        v += Zstd_GetUi64(h) & ((UInt64)(Int64)-1 >> (64 - (8u << n)));
         // info->are_ContentSize_Known = True;
         // info->num_Frames_with_ContentSize++;
         if (info->contentSize_MAX < v)

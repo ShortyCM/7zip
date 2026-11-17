@@ -216,6 +216,11 @@ static HRESULT ReadString(NDecoder::CCOMCoder *stream, AString &s, size_t limit 
   return S_FALSE;
 }
 
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  return (UInt16)((UInt16)p[0] | ((UInt16)p[1] << 8));
+}
+
 static UInt32 Is_Deflate(const Byte *p, size_t size)
 {
   if (size < 1)
@@ -228,13 +233,11 @@ static UInt32 Is_Deflate(const Byte *p, size_t size)
     return k_IsArc_Res_NO;
   if (type == 0)
   {
-    // Stored (uncompreessed data)
-    if ((b >> 3) != 0)
-      return k_IsArc_Res_NO;
+    // Stored (uncompressed data); alignment bits are ignored.
     if (size < 4)
       return k_IsArc_Res_NEED_MORE;
-    UInt16 r = (UInt16)~GetUi16(p + 2);
-    if (GetUi16(p) != r)
+    UInt16 r = (UInt16)~Get16(p + 2);
+    if (Get16(p) != r)
       return k_IsArc_Res_NO;
   }
   else if (type == 2)
@@ -278,7 +281,7 @@ API_FUNC_static_IsArc IsArc_Gz(const Byte *p, size_t size)
   {
     if (size < 2)
       return k_IsArc_Res_NEED_MORE;
-    unsigned xlen = GetUi16(p);
+    unsigned xlen = Get16(p);
     size -= 2;
     p += 2;
     while (xlen != 0)
@@ -287,7 +290,7 @@ API_FUNC_static_IsArc IsArc_Gz(const Byte *p, size_t size)
         return k_IsArc_Res_NO;
       if (size < 4)
         return k_IsArc_Res_NEED_MORE;
-      const unsigned len = GetUi16(p + 2);
+      const unsigned len = Get16(p + 2);
       size -= 4;
       xlen -= 4;
       p += 4;
@@ -446,6 +449,35 @@ HRESULT CItem::WriteFooter(ISequentialOutStream *stream)
   return WriteStream(stream, buf, 8);
 }
 
+Z7_CLASS_IMP_NOQIB_1(
+  CInStreamWithReadResult
+  , ISequentialInStream
+)
+public:
+  CMyComPtr<ISequentialInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithReadResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithReadResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (size == 0)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return S_OK;
+  }
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+
 Z7_CLASS_IMP_CHandler_IInArchive_3(
   IArchiveOpenSeq,
   IOutArchive,
@@ -468,6 +500,7 @@ Z7_CLASS_IMP_CHandler_IInArchive_3(
   UInt64 _headerSize; // only start header (without footer)
   
   CMyComPtr<IInStream> _stream;
+  CMyComPtr<ISequentialInStream> _seqStream;
   CMyComPtr2<ICompressCoder, NDecoder::CCOMCoder> _decoder;
 
   CSingleMethodProps _props;
@@ -636,6 +669,7 @@ Z7_COM7F_IMF(CHandler::OpenSeq(ISequentialInStream *stream))
   {
     Close();
     CreateDecoder();
+    _seqStream = stream;
     _decoder->SetInStream(stream);
     _decoder->InitInStream(true);
     RINOK(_item.ReadHeader(_decoder.ClsPtr()))
@@ -664,10 +698,57 @@ Z7_COM7F_IMF(CHandler::Close())
   _headerSize = 0;
   
   _stream.Release();
+  _seqStream.Release();
   if (_decoder)
     _decoder->ReleaseInStream();
   return S_OK;
 }
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
 
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
@@ -696,13 +777,21 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   CreateDecoder();
 
+  CMyComPtr2_Create<ISequentialInStream, CInStreamWithReadResult> inputCallbackStream;
+  inputCallbackStream->Stream = _seqStream;
+  _decoder->SetInStream(inputCallbackStream);
+
+  CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+  outCallbackStream->Stream = realOutStream;
   CMyComPtr2_Create<ISequentialOutStream, COutStreamWithCRC> outStream;
-  outStream->SetStream(realOutStream);
+  outStream->SetStream(outCallbackStream);
   outStream->Init();
   // realOutStream.Release();
 
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
   lps->Init(extractCallback, true);
+  CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> decoderProgress;
+  decoderProgress->Progress = lps;
 
   bool needReadFirstItem = _needSeekToStart;
   
@@ -775,7 +864,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     const UInt64 startOffset = outStream->GetSize();
     outStream->InitCRC();
 
-    result = _decoder->CodeResume(outStream, NULL, lps);
+    result = _decoder->CodeResume(outStream, NULL, decoderProgress);
+    RINOK(outCallbackStream->Result)
+    RINOK(decoderProgress->Result)
+    RINOK(inputCallbackStream->Result)
 
     packSize = _decoder->GetInputProcessedSize();
     unpackedSize = outStream->GetSize();
@@ -1133,7 +1225,7 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
   UInt64 offset = 0;
   if (IntToBool(newProps))
   {
-    newItem.WriteHeader(outStream);
+    RINOK(newItem.WriteHeader(outStream))
     offset += _headerSize;
   }
   RINOK(InStream_SeekSet(_stream, offset))
@@ -1153,6 +1245,7 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   _timeOptions.Init();
   _props.Init();
 
@@ -1183,6 +1276,7 @@ Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVAR
     RINOK(_props.SetProperty(name, value))
   }
   return S_OK;
+  COM_TRY_END
 }
 
 static const Byte k_Signature[] = { kSignature_0, kSignature_1, kSignature_2 };

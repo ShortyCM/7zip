@@ -474,8 +474,17 @@ static void ReduceString(UString &s)
   const unsigned kMaxSize = 64;
   if (s.Len() <= kMaxSize)
     return;
-  s.Delete(kMaxSize / 2, s.Len() - kMaxSize);
-  s.Insert(kMaxSize / 2, L" ... ");
+  unsigned head = kMaxSize / 2;
+  unsigned tail = s.Len() - kMaxSize / 2;
+  // Keep UTF-16 surrogate pairs together at both abbreviation boundaries.
+  if (s[head - 1] >= 0xd800 && s[head - 1] <= 0xdbff &&
+      s[head] >= 0xdc00 && s[head] <= 0xdfff)
+    --head;
+  if (s[tail - 1] >= 0xd800 && s[tail - 1] <= 0xdbff &&
+      s[tail] >= 0xdc00 && s[tail] <= 0xdfff)
+    ++tail;
+  s.Delete(head, tail - head);
+  s.Insert(head, L" ... ");
 }
 
 static UString GetQuotedReducedString(const UString &s)

@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include "../../Common/AutoPtr.h"
+
 #include "UniqBlocks.h"
 
 unsigned CUniqBlocks::AddUniq(const Byte *data, size_t size)
@@ -32,9 +34,12 @@ unsigned CUniqBlocks::AddUniq(const Byte *data, size_t size)
         left = mid + 1;
     }
   }
-  unsigned index = Bufs.Size();
-  Sorted.Insert(left, index);
-  Bufs.AddNew().CopyFrom(data, size);
+  CMyUniquePtr<CByteBuffer> buf(new CByteBuffer);
+  buf->CopyFrom(data, size);
+  Bufs.ReserveOnePosition();
+  Sorted.ReserveOnePosition();
+  const unsigned index = Bufs.AddInReserved_Ptr_of_new(buf.release());
+  Sorted.InsertInReserved(left, index);
   return index;
 }
 
@@ -50,6 +55,8 @@ void CUniqBlocks::GetReverseMap()
 {
   unsigned num = Sorted.Size();
   BufIndexToSortedIndex.ClearAndSetSize(num);
+  if (num == 0)
+    return;
   unsigned *p = &BufIndexToSortedIndex[0];
   const unsigned *sorted = &Sorted[0];
   for (unsigned i = 0; i < num; i++)

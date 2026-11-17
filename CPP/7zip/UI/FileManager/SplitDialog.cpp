@@ -2,7 +2,10 @@
 
 #include "StdAfx.h"
 
+#include "../../../Windows/ErrorMsg.h"
 #include "../../../Windows/FileName.h"
+
+#include "../Explorer/MyMessages.h"
 
 #include "LangUtils.h"
 
@@ -87,7 +90,12 @@ bool CSplitDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 void CSplitDialog::OnButtonSetPath()
 {
   UString currentPath;
-  _pathCombo.GetText(currentPath);
+  if (!_pathCombo.GetText(currentPath))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
   // UString title = "Specify a location for output folder";
   const UString title = LangString(IDS_SET_FOLDER);
 
@@ -101,14 +109,20 @@ void CSplitDialog::OnButtonSetPath()
 
 void CSplitDialog::OnOK()
 {
-  _pathCombo.GetText(Path);
+  UString path;
   UString volumeString;
-  _volumeCombo.GetText(volumeString);
+  if (!_pathCombo.GetText(path) || !_volumeCombo.GetText(volumeString))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
   volumeString.Trim();
   if (!ParseVolumeSizes(volumeString, VolumeSizes) || VolumeSizes.Size() == 0)
   {
     ::MessageBoxW(*this, LangString(IDS_INCORRECT_VOLUME_SIZE), L"7-Zip", MB_ICONERROR);
     return;
   }
+  Path = path;
   CModalDialog::OnOK();
 }

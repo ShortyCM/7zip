@@ -49,7 +49,7 @@ bool CHuffmanDecoder::Build(const Byte *lens, unsigned numSymbols) throw()
 }
 
 
-unsigned CHuffmanDecoder::Decode(CInBit *inStream) const throw()
+unsigned CHuffmanDecoder::Decode(CInBit *inStream) const
 {
   const UInt32 val = inStream->GetValue(kNumHuffmanBits);
   size_t numBits;
@@ -131,6 +131,8 @@ HRESULT CCoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *ou
     return S_FALSE;
   if (!BuildHuff(_distDecoder, kDistTableSize))
     return S_FALSE;
+  if (_inBitStream.ExtraBitsWereRead())
+    return S_FALSE;
  
   UInt64 prevProgress = 0;
   bool moreOut = false;
@@ -156,6 +158,8 @@ HRESULT CCoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *ou
       }
       else
         b = (Byte)_inBitStream.ReadBits(8);
+      if (_inBitStream.ExtraBitsWereRead())
+        return S_FALSE;
       _outWindowStream.PutByte(b);
       pos++;
     }
@@ -170,6 +174,8 @@ HRESULT CCoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *ou
       if (len == kLenTableSize - 1)
         len += _inBitStream.ReadBits(kNumLenDirectBits);
       len += minMatchLen;
+      if (_inBitStream.ExtraBitsWereRead())
+        return S_FALSE;
       {
         const UInt64 limit = unPackSize - pos;
         // limit != 0

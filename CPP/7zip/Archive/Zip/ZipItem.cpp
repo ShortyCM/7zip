@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../../C/CpuArch.h"
 #include "../../../../C/7zCrc.h"
 
@@ -17,6 +19,20 @@
 
 namespace NArchive {
 namespace NZip {
+
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
 
 using namespace NFileHeader;
 
@@ -131,8 +147,8 @@ bool CExtraSubBlock::ExtractNtfsTime(unsigned index, FILETIME &ft) const
   size -= 4;
   while (size > 4)
   {
-    UInt16 tag = GetUi16(p);
-    unsigned attrSize = GetUi16(p + 2);
+    UInt16 tag = Get16(p);
+    unsigned attrSize = Get16(p + 2);
     p += 4;
     size -= 4;
     if (attrSize > size)
@@ -141,8 +157,8 @@ bool CExtraSubBlock::ExtractNtfsTime(unsigned index, FILETIME &ft) const
     if (tag == NNtfsExtra::kTagTime && attrSize >= 24)
     {
       p += 8 * index;
-      ft.dwLowDateTime = GetUi32(p);
-      ft.dwHighDateTime = GetUi32(p + 4);
+      ft.dwLowDateTime = Get32(p);
+      ft.dwHighDateTime = Get32(p + 4);
       return true;
     }
     p += attrSize;
@@ -174,7 +190,7 @@ bool CExtraSubBlock::Extract_UnixTime(bool isCentral, unsigned index, UInt32 &re
         (flags & (1 << NUnixTime::kMTime)) == 0 ||
         size < 4)
       return false;
-    res = GetUi32(p);
+    res = Get32(p);
     return true;
   }
   for (unsigned i = 0; i < 3; i++)
@@ -184,7 +200,7 @@ bool CExtraSubBlock::Extract_UnixTime(bool isCentral, unsigned index, UInt32 &re
         return false;
       if (index == i)
       {
-        res = GetUi32(p);
+        res = Get32(p);
         return true;
       }
       p += 4;
@@ -206,7 +222,7 @@ bool CExtraSubBlock::Extract_Unix01_Time(unsigned index, UInt32 &res) const
       ID != NExtraID::kUnix1)
     return false;
   const Byte *p = (const Byte *)Data + offset;
-  res = GetUi32(p);
+  res = Get32(p);
   return true;
 }
 
@@ -391,7 +407,7 @@ bool CExtraSubBlock::CheckIzUnicode(const AString &s) const
   const Byte *p = (const Byte *)Data;
   if (p[0] > 1)
     return false;
-  if (CrcCalc(s, s.Len()) != GetUi32(p + 1))
+  if (CrcCalc(s, s.Len()) != Get32(p + 1))
     return false;
   size -= 5;
   p += 5;

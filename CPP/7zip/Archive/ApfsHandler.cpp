@@ -44,8 +44,18 @@
 #define IsViNotDef(x)   ((int)(x) == -1)
 
 #define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 #define G16(_offs_, dest) dest = Get16(p + (_offs_));
 #define G32(_offs_, dest) dest = Get32(p + (_offs_));
@@ -217,14 +227,14 @@ typedef enum
 #define APFS_INCOMPAT_RESERVED_40               (1 << 6)
 */
 
-static const char * const g_APFS_INCOMPAT_Flags[] =
+static const CUInt32PCharPair g_APFS_INCOMPAT_Flags[] =
 {
-    "CASE_INSENSITIVE"
-  , "DATALESS_SNAPS"
-  , "ENC_ROLLED"
-  , "NORMALIZATION_INSENSITIVE"
-  , "INCOMPLETE_RESTORE"
-  , "SEALED_VOLUME"
+    { 0, "CASE_INSENSITIVE" }
+  , { 1, "DATALESS_SNAPS" }
+  , { 2, "ENC_ROLLED" }
+  , { 3, "NORMALIZATION_INSENSITIVE" }
+  , { 4, "INCOMPLETE_RESTORE" }
+  , { 5, "SEALED_VOLUME" }
 };
 
 /*
@@ -288,7 +298,8 @@ struct CSuperBlock
   prange_t mkb_locker;
   */
 
-  bool Parse(const Byte *p);
+  bool ParseHeader(const Byte *p);
+  bool Parse(const Byte *p, size_t size = (1 << 12));
 };
 
 struct CSuperBlock2
@@ -317,7 +328,7 @@ static UInt64 Fletcher64(const Byte *data, size_t size)
   UInt64 b = (val >> 32) & kMax32;
   for (size_t i = 0; i < size; i += 4)
   {
-    a += GetUi32(data + i);
+    a += Get32(data + i);
     b += a;
   }
   a %= kMax32;
@@ -351,7 +362,7 @@ static const unsigned kApfsHeaderSize = 1 << 12;
 // #define OID_RESERVED_COUNT  1024
 // This range of identifiers is reserved for physical, virtual, and ephemeral objects
 
-bool CSuperBlock::Parse(const Byte *p)
+bool CSuperBlock::ParseHeader(const Byte *p)
 {
   CPhys o;
   o.Parse(p);
@@ -363,9 +374,6 @@ bool CSuperBlock::Parse(const Byte *p)
     return false;
   if (memcmp(p + k_SignatureOffset, k_Signature, 4) != 0)
     return false;
-  if (!CheckFletcher64(p, kApfsHeaderSize))
-    return false;
-
   G32 (0x24, block_size)
   {
     const unsigned logSize = GetLogSize(block_size);
@@ -443,6 +451,15 @@ bool CSuperBlock::Parse(const Byte *p)
   */
 
   return true;
+}
+
+
+bool CSuperBlock::Parse(const Byte *p, size_t size)
+{
+  return size >= kApfsHeaderSize
+      && ParseHeader(p)
+      && size >= block_size
+      && CheckFletcher64(p, block_size);
 }
 
 
@@ -1793,9 +1810,13 @@ void CVol::AddComment(UString &s) const
   s.Add_LF();
 
   AddComment_Name(s, "incompatible_features");
-  s += FlagsToString(g_APFS_INCOMPAT_Flags,
-      Z7_ARRAY_SIZE(g_APFS_INCOMPAT_Flags),
-      (UInt32)apfs.incompatible_features);
+  if (apfs.incompatible_features)
+  {
+    NWindows::NCOM::CPropVariant flags;
+    Flags64ToProp(g_APFS_INCOMPAT_Flags,
+        Z7_ARRAY_SIZE(g_APFS_INCOMPAT_Flags), apfs.incompatible_features, flags);
+    s += flags.bstrVal;
+  }
   s.Add_LF();
 
 
@@ -2011,9 +2032,6 @@ struct CDatabase
   HRESULT OpenVolume(const CObjectMap &omap, const oid_t fs_oid);
   HRESULT Open2();
 
-  HRESULT GetAttrStream(IInStream *apfsInStream, const CVol &vol,
-      const CAttr &attr, ISequentialInStream **stream);
-
   HRESULT GetAttrStream_dstream(IInStream *apfsInStream, const CVol &vol,
       const CAttr &attr, ISequentialInStream **stream);
 
@@ -2048,7 +2066,11 @@ API_FUNC_static_IsArc IsArc_APFS(const Byte *p, size_t size)
   if (size < kApfsHeaderSize)
     return k_IsArc_Res_NEED_MORE;
   CSuperBlock sb;
-  if (!sb.Parse(p))
+  if (!sb.ParseHeader(p))
+    return k_IsArc_Res_NO;
+  if (size < sb.block_size)
+    return k_IsArc_Res_NEED_MORE;
+  if (!sb.Parse(p, size))
     return k_IsArc_Res_NO;
   return k_IsArc_Res_YES;
 }
@@ -2355,9 +2377,21 @@ HRESULT CDatabase::Open2()
   {
     Byte buf[kApfsHeaderSize];
     RINOK(ReadStream_FALSE(OpenInStream, buf, kApfsHeaderSize))
-    if (!sb.Parse(buf))
+    if (!sb.ParseHeader(buf))
       return S_FALSE;
-    sb2.Parse(buf);
+    CByteBuffer fullBlock;
+    const Byte *p = buf;
+    if (sb.block_size > kApfsHeaderSize)
+    {
+      fullBlock.Alloc(sb.block_size);
+      memcpy(fullBlock, buf, kApfsHeaderSize);
+      RINOK(ReadStream_FALSE(OpenInStream, fullBlock + kApfsHeaderSize,
+          sb.block_size - kApfsHeaderSize))
+      p = fullBlock;
+    }
+    if (!sb.Parse(p, sb.block_size))
+      return S_FALSE;
+    sb2.Parse(p);
   }
 
   {
@@ -2526,7 +2560,7 @@ HRESULT CDatabase::OpenVolume(const CObjectMap &omap, const oid_t fs_oid)
      by the omap_oid field. */
 
   CMap map;
-  ReadObjectMap(apfs.omap_oid, &vol, map.Omap);
+  RINOK(ReadObjectMap(apfs.omap_oid, &vol, map.Omap))
 
   const Byte *hash_for_root = NULL;
 
@@ -3144,8 +3178,11 @@ HRESULT CDatabase::OpenVolume(const CObjectMap &omap, const oid_t fs_oid)
           CByteBuffer buf2;
           const size_t size = (size_t)attr.dstream.size;
           buf2.Alloc(size);
-          if (ReadStream_FAIL(inStream, buf2, size) == S_OK)
+          const HRESULT readRes = ReadStream_FALSE(inStream, buf2, size);
+          if (readRes == S_OK)
             attr.Data = buf2;
+          else if (readRes != S_FALSE)
+            return readRes;
 
           ProgressVal_Cur += size;
           if (OpenCallback)
@@ -3437,6 +3474,8 @@ Z7_class_CHandler_final:
 
   CMyComPtr<IInStream> _stream;
   int FindHashIndex_for_Item(UInt32 index);
+  HRESULT GetAttrStream(IInStream *apfsInStream, const CVol &vol,
+      const CAttr &attr, ISequentialInStream **stream);
 };
 
 
@@ -4071,6 +4110,58 @@ UInt64 CDatabase::GetSize(const UInt32 index) const
 }
 
 
+Z7_CLASS_IMP_IInStream(
+  CInStreamWithResult
+)
+public:
+  CMyComPtr<IInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+Z7_COM7F_IMF(CInStreamWithResult::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Seek(offset, seekOrigin, newPosition);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Write(data, size, processedSize);
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -4166,6 +4257,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       {
         if (inode.CompressHeader.IsSupported)
         {
+          CMyComPtr2_Create<IInStream, CInStreamWithResult> inCallbackStream;
+          inCallbackStream->Stream = _stream;
           CMyComPtr<ISequentialInStream> inStreamFork;
           UInt64 forkSize = 0;
           const CByteBuffer *decmpfs_Data = NULL;
@@ -4176,7 +4269,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
             {
               const CAttr &attr = inode.Attrs[inode.ResourceIndex];
               forkSize = attr.GetSize();
-              GetAttrStream(_stream, vol, attr, &inStreamFork);
+              GetAttrStream(inCallbackStream, vol, attr, &inStreamFork);
             }
           }
           else
@@ -4187,13 +4280,18 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
           
           if (inStreamFork || decmpfs_Data)
           {
+            CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+            outCallbackStream->Stream = realOutStream;
             const HRESULT hres = decoder.Extract(
-                inStreamFork, realOutStream,
+                inStreamFork, realOutStream ? outCallbackStream.Interface() : NULL,
                 forkSize,
                 inode.CompressHeader,
                 decmpfs_Data,
                 currentTotalSize, extractCallback,
                 opRes);
+            RINOK(outCallbackStream->Result)
+            RINOK(decoder.ProgressResult)
+            RINOK(inCallbackStream->Result)
             if (hres != S_FALSE && hres != S_OK)
               return hres;
           }
@@ -4204,7 +4302,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       else
       {
         CMyComPtr<ISequentialInStream> inStream;
-        if (GetStream(index, &inStream) == S_OK && inStream)
+        const HRESULT hres = GetStream(index, &inStream);
+        if (hres != S_OK && hres != S_FALSE)
+          return hres;
+        if (hres == S_OK && inStream)
         {
           CMyComPtr2<ISequentialOutStream, COutStreamWithHash> hashStream;
          
@@ -4294,6 +4395,7 @@ int CHandler::FindHashIndex_for_Item(UInt32 index)
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  COM_TRY_BEGIN
   *stream = NULL;
 
   const CRef2 &ref2 = Refs2[index];
@@ -4367,11 +4469,12 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
     }
   }
   return GetStream2(_stream, extents, rem, stream);
+  COM_TRY_END
 }
 
 
 
-HRESULT CDatabase::GetAttrStream(IInStream *apfsInStream, const CVol &vol,
+HRESULT CHandler::GetAttrStream(IInStream *apfsInStream, const CVol &vol,
     const CAttr &attr, ISequentialInStream **stream)
 {
   *stream = NULL;
@@ -4433,7 +4536,10 @@ HRESULT CDatabase::GetStream2(
     if (cur > rem)
       cur = rem;
     CSeekExtent se;
-    se.Phy = (UInt64)e.phys_block_num << sb.block_size_Log;
+    if (e.phys_block_num == 0)
+      se.SetAs_ZeroFill();
+    else
+      se.Phy = (UInt64)e.phys_block_num << sb.block_size_Log;
     se.Virt = virt;
     virt += cur;
     rem -= cur;

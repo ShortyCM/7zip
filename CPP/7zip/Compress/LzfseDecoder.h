@@ -24,25 +24,12 @@ Z7_CLASS_IMP_NOQIB_1(
   CByteBuffer _literals;
   CByteBuffer _buffer;
 
-  class CCoderReleaser
-  {
-    CDecoder *m_Coder;
-  public:
-    bool NeedFlush;
-    CCoderReleaser(CDecoder *coder Z7_lifetimebound): m_Coder(coder), NeedFlush(true) {}
-    ~CCoderReleaser()
-    {
-      if (NeedFlush)
-        m_Coder->m_OutWindowStream.Flush();
-    }
-  };
-  friend class CCoderReleaser;
-
   HRESULT GetUInt32(UInt32 &val);
 
   HRESULT DecodeUncompressed(UInt32 unpackSize);
   HRESULT DecodeLzvn(UInt32 unpackSize, UInt32 packSize);
   HRESULT DecodeLzfse(UInt32 unpackSize, Byte version);
+  HRESULT DecodeBlocks(const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress);
 
   HRESULT CodeReal(ISequentialInStream *inStream, ISequentialOutStream *outStream,
       const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress);

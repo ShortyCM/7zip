@@ -135,7 +135,6 @@ static HRESULT ReadUnicodeStrings(const wchar_t *p, size_t size, UStringVector &
     const size_t num = (size_t)(p - start);
     if (num == 1)
     {
-      if (p != lim) return E_INVALIDARG; // S_FALSE
       return S_OK;
     }
     s.SetFrom(start, (unsigned)(num - 1));
@@ -210,8 +209,7 @@ static HRESULT DataObject_GetData_HDROP_Names(IDataObject *dataObject, UStringVe
   HRESULT hres;
   if (dropFiles->fWide)
   {
-    if (size % sizeof(wchar_t) != 0)
-      return E_INVALIDARG;
+    // The allocation can contain padding after the double null terminator.
     hres = ReadUnicodeStrings((const wchar_t *)namesData, size / sizeof(wchar_t), names);
   }
   else
@@ -395,7 +393,7 @@ HRESULT DataObject_GetData_FILE_ATTRS(IDataObject *dataObject, CFileAttribs &att
     return E_INVALIDARG;
   }
   if ((blockSize - (sizeof(MYWIN_FILE_ATTRIBUTES_ARRAY) - sizeof(DWORD)))
-      / sizeof(DWORD) != numFiles)
+      / sizeof(DWORD) < numFiles)
     return E_INVALIDARG;
   // attribs.Sum = faa->dwSumFileAttributes;
   // attribs.Product = faa->dwProductFileAttributes;

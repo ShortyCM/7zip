@@ -974,6 +974,7 @@ HRESULT CProxyArc2::Load(const CArc &arc, IProgress *progress)
     {
       const wchar_t *s;
       unsigned len;
+      NCOM::CPropVariant prop;
       if (p && propType == NPropDataType::kUtf8z)
       {
         tempAString = (const char *)p;
@@ -983,7 +984,6 @@ HRESULT CProxyArc2::Load(const CArc &arc, IProgress *progress)
       }
       else
       {
-        NCOM::CPropVariant prop;
         RINOK(arc.Archive->GetProperty(i, kpidName, &prop))
         if (prop.vt == VT_BSTR)
           s = prop.bstrVal;

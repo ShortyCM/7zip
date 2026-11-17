@@ -37,6 +37,13 @@ API_FUNC_IsArc IsArc_Fat(const Byte *p, size_t size);
 
 namespace NMbr {
 
+static Z7_FORCE_INLINE UInt32 Get32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
 struct CChs
 {
   Byte Head;
@@ -109,8 +116,8 @@ struct CPartition
     BeginChs.Parse(p + 1);
     Type = p[4];
     EndChs.Parse(p + 5);
-    Lba = GetUi32(p + 8);
-    NumBlocks = GetUi32(p + 12);
+    Lba = Get32(p + 8);
+    NumBlocks = Get32(p + 12);
     if (Type == 0)
       return true;
     if (Status != 0 && Status != 0x80)
@@ -236,7 +243,7 @@ static bool IsEmptyBuffer(const Byte *data, size_t size)
 }
 */
 
-const char *GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize);
+HRESULT GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize, const char *&fileSystem);
 
 HRESULT CHandler::ReadTables(IInStream *stream, UInt32 baseLba, UInt32 lba, unsigned level)
 {
@@ -263,7 +270,7 @@ HRESULT CHandler::ReadTables(IInStream *stream, UInt32 baseLba, UInt32 lba, unsi
     if (buf[0x1FE] != 0x55 || buf[0x1FF] != 0xAA)
       return S_FALSE;
     if (level == 0)
-      _signature = GetUi32(buf + 0x1B8);
+      _signature = Get32(buf + 0x1B8);
     for (unsigned i = 0; i < kNumHeaderParts; i++)
       if (!parts[i].Parse(buf + 0x1BE + 16 * i))
         return S_FALSE;
@@ -299,9 +306,18 @@ HRESULT CHandler::ReadTables(IInStream *stream, UInt32 baseLba, UInt32 lba, unsi
           // && _totalSize - lim12 < (1 << 28) // we can try to exclude false positive cases
           )
       // if (IsEmptyBuffer(&_buffer[(1 << 9)], (1 << 12) - (1 << 9)))
-      if (InStream_SeekSet(stream, (UInt64)firstLba << 12) == S_OK)
-      if (GetFileSystem(stream, (UInt64)numBlocks << 12))
-        _sectorSizeLog = 12;
+      {
+        const HRESULT res = InStream_SeekSet(stream, (UInt64)firstLba << 12);
+        if (res != S_OK && res != S_FALSE)
+          return res;
+        if (res == S_OK)
+        {
+          const char *fileSystem;
+          RINOK(GetFileSystem(stream, (UInt64)numBlocks << 12, fileSystem))
+          if (fileSystem)
+            _sectorSizeLog = 12;
+        }
+      }
     }
   }
 
@@ -419,21 +435,25 @@ static bool Is_Udf(const Byte *p)
 }
 
 
-const char *GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize)
+HRESULT GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize, const char *&fileSystem)
 {
+  fileSystem = NULL;
   const size_t kHeaderSize = 1 << 9;
   if (partitionSize >= kHeaderSize)
   {
     Byte buf[kHeaderSize];
-    if (ReadStream_FAIL(stream, buf, kHeaderSize) == S_OK)
+    const HRESULT res = ReadStream_FALSE(stream, buf, kHeaderSize);
+    if (res != S_OK && res != S_FALSE)
+      return res;
+    if (res == S_OK)
     {
       // NTFS is expected default filesystem for (Type == 7)
       if (Is_Ntfs(buf))
-        return "NTFS";
-      if (Is_ExFat(buf))
-        return "exFAT";
-      if (NFat::IsArc_Fat(buf, kHeaderSize))
-        return "FAT";
+        fileSystem = "NTFS";
+      else if (Is_ExFat(buf))
+        fileSystem = "exFAT";
+      else if (NFat::IsArc_Fat(buf, kHeaderSize))
+        fileSystem = "FAT";
       const size_t kHeaderSize2 = k_Udf_StartPos + (1 << 9);
       if (partitionSize >= kHeaderSize2)
       {
@@ -441,14 +461,17 @@ const char *GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize)
         {
           CByteBuffer buffer(kHeaderSize2);
           // memcpy(buffer, buf, kHeaderSize);
-          if (ReadStream_FAIL(stream, buffer + kHeaderSize, kHeaderSize2 - kHeaderSize) == S_OK)
+          const HRESULT res2 = ReadStream_FALSE(stream, buffer + kHeaderSize, kHeaderSize2 - kHeaderSize);
+          if (res2 != S_OK && res2 != S_FALSE)
+            return res2;
+          if (res2 == S_OK)
             if (Is_Udf(buffer))
-              return "UDF";
+              fileSystem = "UDF";
         }
       }
     }
   }
-  return NULL;
+  return S_OK;
 }
 
 
@@ -480,9 +503,12 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream,
     CItem &item = _items[i];
     if (item.Part.Type != kType_Windows_NTFS)
       continue;
-    if (InStream_SeekSet(stream, item.Part.GetPos(_sectorSizeLog)) != S_OK)
+    const HRESULT res = InStream_SeekSet(stream, item.Part.GetPos(_sectorSizeLog));
+    if (res != S_OK && res != S_FALSE)
+      return res;
+    if (res != S_OK)
       continue;
-    item.FileSystem = GetFileSystem(stream, item.Size);
+    RINOK(GetFileSystem(stream, item.Size, item.FileSystem))
     item.WasParsed = true;
   }
 

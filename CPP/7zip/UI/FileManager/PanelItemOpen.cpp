@@ -302,25 +302,36 @@ public:
   
   void CloseAll()
   {
+    unsigned numRemaining = 0;
     FOR_VECTOR (i, Handles)
     {
       HANDLE h = Handles[i];
-      if (h != NULL)
-        CloseHandle(h);
+      if (h != NULL && !CloseHandle(h))
+      {
+        Handles[numRemaining] = h;
+        NeedWait[numRemaining] = NeedWait[i];
+        numRemaining++;
+      }
     }
 
-    Handles.Clear();
-    NeedWait.Clear();
+    Handles.DeleteFrom(numRemaining);
+    NeedWait.DeleteFrom(numRemaining);
     // Names.Clear();
 
     #ifndef UNDER_CE
     // Path.Empty();
-    _ids.Clear();
+    if (numRemaining == 0)
+      _ids.Clear();
     #endif
   }
 
   void SetMainProcess(HANDLE h)
   {
+    CProcess process;
+    process.Attach(h);
+    Handles.ReserveOnePosition();
+    NeedWait.ReserveOnePosition();
+
     #ifndef UNDER_CE
     const
     Func_GetProcessId func = Z7_GET_PROC_ADDRESS(
@@ -338,8 +349,9 @@ public:
 
     #endif
 
-    Handles.Add(h);
-    NeedWait.Add(true);
+    Handles.AddInReserved(h);
+    NeedWait.AddInReserved(true);
+    process.Detach();
   }
 
   #ifndef UNDER_CE
@@ -402,10 +414,15 @@ public:
           if (hProcess)
           {
             DEBUG_PRINT("----- OpenProcess OK -----");
+            CProcess process;
+            process.Attach(hProcess);
+            Handles.ReserveOnePosition();
+            NeedWait.ReserveOnePosition();
             // if (!isFromProgs)
               _ids.AddToUniqueSorted(id);
-            Handles.Add(hProcess);
-            NeedWait.Add(true);
+            Handles.AddInReserved(hProcess);
+            NeedWait.AddInReserved(true);
+            process.Detach();
             // Names.Add(name);
             wasAdded = true;
             // ProgsWereUsed = isFromProgs;
@@ -595,13 +612,12 @@ HRESULT CPanel::OpenAsArc_Index(unsigned index, const wchar_t *type
 }
 
 
-HRESULT CPanel::OpenParentArchiveFolder()
+int CPanel::ConfirmCloseArchiveFolder(bool allowCancel)
 {
   CDisableTimerProcessing disableTimerProcessing(*this);
   CDisableNotify disableNotify(*this);
   if (_parentFolders.Size() < 2)
-    return S_OK;
-  const CFolderLink &folderLinkPrev = _parentFolders[_parentFolders.Size() - 2];
+    return IDNO;
   const CFolderLink &folderLink = _parentFolders.Back();
   NFind::CFileInfo newFileInfo;
   if (newFileInfo.Find(folderLink.FilePath))
@@ -609,16 +625,29 @@ HRESULT CPanel::OpenParentArchiveFolder()
     if (folderLink.WasChanged_from_FolderLink(newFileInfo))
     {
       const UString message = MyFormatNew(IDS_WANT_UPDATE_MODIFIED_FILE, folderLink.RelPath);
-      if (::MessageBoxW((HWND)*this, message, L"7-Zip", MB_YESNOCANCEL | MB_ICONQUESTION) == IDYES)
-      {
-        if (OnOpenItemChanged(folderLink.FileIndex, fs2us(folderLink.FilePath),
-            folderLinkPrev.UsePassword, folderLinkPrev.Password) != S_OK)
-        {
-          ::MessageBoxW((HWND)*this, MyFormatNew(IDS_CANNOT_UPDATE_FILE,
-              fs2us(folderLink.FilePath)), L"7-Zip", MB_OK | MB_ICONSTOP);
-          return S_OK;
-        }
-      }
+      return ::MessageBoxW((HWND)*this, message, L"7-Zip",
+          (allowCancel ? MB_YESNOCANCEL : MB_YESNO) | MB_ICONQUESTION);
+    }
+  }
+  return IDNO;
+}
+
+HRESULT CPanel::OpenParentArchiveFolder(bool updateModified)
+{
+  CDisableTimerProcessing disableTimerProcessing(*this);
+  CDisableNotify disableNotify(*this);
+  if (_parentFolders.Size() < 2)
+    return S_OK;
+  const CFolderLink &folderLinkPrev = _parentFolders[_parentFolders.Size() - 2];
+  const CFolderLink &folderLink = _parentFolders.Back();
+  if (updateModified)
+  {
+    if (OnOpenItemChanged(folderLink.FileIndex, fs2us(folderLink.FilePath),
+        folderLinkPrev.UsePassword, folderLinkPrev.Password) != S_OK)
+    {
+      ::MessageBoxW((HWND)*this, MyFormatNew(IDS_CANNOT_UPDATE_FILE,
+          fs2us(folderLink.FilePath)), L"7-Zip", MB_OK | MB_ICONSTOP);
+      return S_OK;
     }
   }
   folderLink.DeleteDirAndFile();
@@ -682,7 +711,7 @@ void SplitCmdLineSmart(const UString &cmd, UString &prg, UString &params)
     int pos = prg.Find(L'"', 1);
     if (pos >= 0)
     {
-      if ((unsigned)(pos + 1) == prg.Len() || prg[pos + 1] == ' ')
+      if ((unsigned)(pos + 1) == prg.Len() || prg[pos + 1] == ' ' || prg[pos + 1] == '\t')
       {
         params = prg.Ptr((unsigned)(pos + 1));
         params.Trim();
@@ -1069,7 +1098,8 @@ LRESULT CPanel::OnOpenItemChanged(LPARAM lParam)
     return 0;
   UInt32 fileIndex = tpi.FileIndex;
   UInt32 numItems;
-  _folder->GetNumberOfItems(&numItems);
+  if (_folder->GetNumberOfItems(&numItems) != S_OK)
+    return 0;
   
   // This code is not 100% OK for cases when there are several files with
   // tpi.RelPath name and there are changes in archive before update.
@@ -1122,8 +1152,8 @@ void CExitEventLauncher::Exit(bool hardExit)
       // if (waitResult == WAIT_TIMEOUT) wait = 1;
       if (!hardExit && waitResult != WAIT_OBJECT_0)
         continue;
-      Thread_Close(&th);
-      _numActiveThreads--;
+      if (Thread_Close(&th) == 0)
+        _numActiveThreads--;
     }
   }
 }
@@ -1791,10 +1821,11 @@ void CPanel::OpenItemInArchive(unsigned index, bool tryInternal, bool tryExterna
   if ((HANDLE)process)
     tpi->Processes.SetMainProcess(process.Detach());
 
+  g_ExitEventLauncher._threads.ReserveOnePosition();
   ::CThread th;
   if (Thread_Create(&th, MyThreadFunction, tpi.get()) != 0)
     throw 271824;
-  g_ExitEventLauncher._threads.Add(th);
+  g_ExitEventLauncher._threads.AddInReserved(th);
   g_ExitEventLauncher._numActiveThreads++;
 
   tempDirectory.DisableDeleting();

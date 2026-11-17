@@ -204,7 +204,14 @@ void CUtf8Check::Check_Buf(const char *src, size_t size) throw()
     if (numBytes != 0)
     {
       if (pos == size)
+      {
         Truncated = true;
+        // A reduced sequence must still have a possible Unicode completion.
+        const UInt64 minPoint = (UInt64)val << (numBytes * 6);
+        if (c >= 0xf5 || minPoint >= 0x110000
+            || IS_SURROGATE_POINT((UInt32)minPoint))
+          NonUtf = true;
+      }
       else
         UTF_ERROR_UTF8_CHECK
     }

@@ -136,6 +136,8 @@ HRESULT CCoder::CodeReal(UInt32 rem, ICompressProgressInfo *progress)
       const unsigned pbit = (DictSize <= (1 << 14) ? 4 : 5);
       if (!ReadTP(NP, pbit, -1))
         return S_FALSE;
+      if (_inBitStream.ExtraBitsWereRead())
+        return S_FALSE;
     }
   
     blockSize--;
@@ -143,6 +145,9 @@ HRESULT CCoder::CodeReal(UInt32 rem, ICompressProgressInfo *progress)
     unsigned number = (unsigned)_symbolC;
     if (_symbolC < 0)
       number = _decoderC.DecodeFull(&_inBitStream);
+
+    if (_inBitStream.ExtraBitsWereRead())
+      return S_FALSE;
 
     if (number < 256)
     {
@@ -162,6 +167,9 @@ HRESULT CCoder::CodeReal(UInt32 rem, ICompressProgressInfo *progress)
         dist--;
         dist = ((UInt32)1 << dist) + _inBitStream.ReadBits((unsigned)dist);
       }
+
+      if (_inBitStream.ExtraBitsWereRead())
+        return S_FALSE;
       
       if (dist >= DictSize)
         return S_FALSE;
@@ -205,12 +213,16 @@ HRESULT CCoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStr
     _outWindow.Init(false);
     _inBitStream.SetStream(inStream);
     _inBitStream.Init();
+    HRESULT result;
+    try
     {
-      CCoderReleaser coderReleaser(this);
-      RINOK(CodeReal(outSize, progress))
-      coderReleaser.Disable();
+      result = CodeReal(outSize, progress);
     }
-    return _outWindow.Flush();
+    catch(const CLzOutWindowException &e) { return e.ErrorCode; }
+    catch(const CInBufferException &e) { result = e.ErrorCode; }
+    catch(...) { result = S_FALSE; }
+    RINOK(_outWindow.Flush())
+    return result;
   }
   catch(const CInBufferException &e) { return e.ErrorCode; }
   catch(const CLzOutWindowException &e) { return e.ErrorCode; }

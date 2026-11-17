@@ -136,11 +136,18 @@ HRESULT CInOutTempBuffer::Write_HRESULT(const void *data, UInt32 size)
   }
 
  #ifdef USE_InOutTempBuffer_FILE
-  if (!_outFile.WriteFull(data, size))
-    return GetLastError_noZero_HRESULT();
-  _crc = CrcUpdate(_crc, data, size);
-  _size += size;
-  return S_OK;
+  #ifdef _WIN32
+  UInt32 processed = 0;
+  const bool result = _outFile.Write(data, size, processed);
+  #else
+  size_t processed = 0;
+  const bool result = (_outFile.write_full(data, size, processed) != -1);
+  #endif
+  const HRESULT hres = (result && processed == size) ?
+      S_OK : GetLastError_noZero_HRESULT();
+  _crc = CrcUpdate(_crc, data, processed);
+  _size += processed;
+  return hres;
  #endif
 }
 

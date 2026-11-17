@@ -55,7 +55,9 @@ public:
   {
     unsigned bitOffset = _bitOffset;
     const Byte *buf = _buf;
-    const UInt32 res = GetBe32(buf) << bitOffset;
+    UInt32 value;
+    memcpy(&value, buf, sizeof(value));
+    const UInt32 res = GetBe32(&value) << bitOffset;
     bitOffset += numBits;
     _buf = buf + (bitOffset >> 3);
     _bitOffset = bitOffset & 7;

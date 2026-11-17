@@ -101,13 +101,10 @@ public:
   unsigned Get_Ns100() const
   {
     const unsigned prec = wReserved1;
+    if (prec == 0 || prec > k_PropVar_TimePrec_1ns || wReserved3 != 0)
+      return 0;
     const unsigned ns100 = wReserved2;
-    if (prec == 0
-        && prec <= k_PropVar_TimePrec_1ns
-        && ns100 < 100
-        && wReserved3 == 0)
-      return ns100;
-    return 0;
+    return ns100 < 100 ? ns100 : 0;
   }
 
   ~CPropVariant() throw();

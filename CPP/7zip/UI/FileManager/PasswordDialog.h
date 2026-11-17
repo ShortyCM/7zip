@@ -16,7 +16,7 @@ class CPasswordDialog: public NWindows::NControl::CModalDialog
   virtual bool OnInit() Z7_override;
   virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
   void SetTextSpec();
-  void ReadControls();
+  bool ReadControls();
 public:
   UString Password;
   bool ShowPassword;

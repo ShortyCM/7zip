@@ -19,8 +19,16 @@
 #include "../Compress/CopyCoder.h"
 
 #define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
+
+static UInt32 Get32(const Byte *p)
+{
+  return (UInt32)p[0] | ((UInt32)p[1] << 8) | ((UInt32)p[2] << 16) | ((UInt32)p[3] << 24);
+}
+
+static UInt64 Get64(const Byte *p)
+{
+  return (UInt64)Get32(p) | ((UInt64)Get32(p + 4) << 32);
+}
 
 #define G16(_offs_, dest) dest = Get16(p + (_offs_));
 #define G32(_offs_, dest) dest = Get32(p + (_offs_));
@@ -507,6 +515,7 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
   AString DeviceArcName;
 
   HRESULT Open2(IInStream *stream);
+  HRESULT GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &seekResult);
 };
 
 
@@ -985,7 +994,14 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  HRESULT seekResult = S_OK;
+  return GetStream2(index, stream, seekResult);
+}
+
+HRESULT CHandler::GetStream2(UInt32 index, ISequentialInStream **stream, HRESULT &seekResult)
+{
   COM_TRY_BEGIN
+  seekResult = S_OK;
   *stream = NULL;
   
   const CPartition &item = _items[index];
@@ -995,7 +1011,10 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
     return S_FALSE;
 
   if (item.num_extents == 0)
-    return CreateLimitedInStream(_stream, 0, 0, stream);
+  {
+    seekResult = CreateLimitedInStream(_stream, 0, 0, stream);
+    return seekResult;
+  }
 
   if (item.num_extents == 1)
   {
@@ -1008,7 +1027,8 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
       const UInt64 size = item.GetSize();
       if (pos + size < pos)
         return S_FALSE;
-      return CreateLimitedInStream(_stream, pos, size, stream);
+      seekResult = CreateLimitedInStream(_stream, pos, size, stream);
+      return seekResult;
     }
   }
 
@@ -1115,7 +1135,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   lps->Init(extractCallback, false);
 
   totalSize = 0;
-  
+
   for (i = 0;; i++)
   {
     CLocalProgress *lps2 = lps.ClsPtr();
@@ -1141,7 +1161,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     RINOK(extractCallback->PrepareOperation(askMode))
 
     CMyComPtr<ISequentialInStream> inStream;
-    const HRESULT hres = GetStream(index, &inStream);
+    HRESULT seekResult = S_OK;
+    const HRESULT hres = GetStream2(index, &inStream, seekResult);
+    RINOK(seekResult)
     opRes = NExtract::NOperationResult::kUnsupportedMethod;
     if (hres != S_FALSE)
     {

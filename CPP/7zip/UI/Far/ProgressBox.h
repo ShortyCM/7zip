@@ -45,6 +45,7 @@ class CProgressBox: public CPercentPrinterState
   DWORD _prevElapsedSec;
 
   bool _wasPrinted;
+  bool _printedUseBytesForPercents;
 public:
   bool UseBytesForPercents;
   DWORD StartTick;
@@ -73,6 +74,7 @@ public:
   CProgressBox(UInt32 tickStep = 200):
       _tickStep(tickStep),
       _prevTick(0),
+      _printedUseBytesForPercents(true),
       UseBytesForPercents(true),
       StartTick(0),
       MaxLen(60)

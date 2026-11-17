@@ -126,7 +126,7 @@ public:
   #endif
 
   bool RemoveItem(UINT item, UINT flags) { return BOOLToBool(::RemoveMenu(_menu, item, flags)); }
-  void RemoveAllItemsFrom(UINT index) { while (RemoveItem(index, MF_BYPOSITION)); }
+  void RemoveAllItemsFrom(UINT index) { while (::DeleteMenu(_menu, index, MF_BYPOSITION)); }
   void RemoveAllItems() { RemoveAllItemsFrom(0); }
 
   #ifndef _UNICODE

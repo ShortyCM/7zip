@@ -212,11 +212,11 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     if (!testMode && !outStream)
       return S_OK;
     RINOK(extractCallback->PrepareOperation(askMode))
-        
+
     NCompress::CCopyCoderBase copyCoder;
     CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
     lps->Init(extractCallback, false);
-      
+
     opRes = NExtract::NOperationResult::kOK;
     FOR_VECTOR(i, Vols)
     {
@@ -259,8 +259,7 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
       if (localPos < v.Size)
       {
         _volIndex = mid;
-        if (localPos != v.LocalPos)
-          RINOK(v.Stream->Seek((Int64)localPos, STREAM_SEEK_SET, &v.LocalPos))
+        RINOK(v.Stream->Seek((Int64)localPos, STREAM_SEEK_SET, &v.LocalPos))
         {
           const UInt64 rem = v.Size - localPos;
           if (size > rem)
@@ -283,14 +282,14 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
     mid = (left + right) / 2;
   }
 }
-  
+
 Z7_COM7F_IMF(CHandler::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
 {
   switch (seekOrigin)
   {
     case STREAM_SEEK_SET: break;
-    case STREAM_SEEK_CUR: offset += _pos; break;
-    case STREAM_SEEK_END: offset += _totalSize; break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_pos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset(_totalSize, offset, offset)) break;
     default: return STG_E_INVALIDFUNCTION;
   }
   if (offset < 0)
@@ -304,24 +303,23 @@ Z7_COM7F_IMF(CHandler::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
   COM_TRY_BEGIN
+  *stream = NULL;
   if (index != 0)
     return E_INVALIDARG;
-  *stream = NULL;
-  _volIndex = 0;
-  _pos = 0;
-  /*
+  CMultiStream *streamSpec = new CMultiStream;
+  CMyComPtr<ISequentialInStream> streamTemp = streamSpec;
   FOR_VECTOR (i, Vols)
   {
-    CVol &v = Vols[i];
-    v.LocalPos = 0;
-    RINOK(InStream_SeekToBegin(v.Stream))
+    CMultiStream::CSubStreamInfo &s = streamSpec->Streams.AddNew();
+    s.Stream = Vols[i].Stream;
+    s.Size = Vols[i].Size;
   }
-  */
-  CMyComPtr<ISequentialInStream> streamTemp = this;
+  RINOK(streamSpec->Init())
   *stream = streamTemp.Detach();
   return S_OK;
   COM_TRY_END
 }
+
 
 REGISTER_ARC_I_NO_SIG(
   "Split", "001", NULL, 0xEA,

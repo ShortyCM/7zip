@@ -53,18 +53,19 @@ CSysString CModifiedExtInfo::GetString() const
 }
 
 
-int CSystemPage::AddIcon(const UString &iconPath, int iconIndex)
+int CSystemPage::AddIcon(const UString &iconPath, int iconIndex, bool iconIndexDefined)
 {
   if (iconPath.IsEmpty())
     return -1;
-  if (iconIndex == -1)
+  if (iconIndex == -1 && !iconIndexDefined)
     iconIndex = 0;
   
-  HICON hicon;
+  HICON hicon = NULL;
   
   #ifdef UNDER_CE
   ExtractIconExW(iconPath, iconIndex, NULL, &hicon, 1);
   if (!hicon)
+    return -1;
   #else
   // we expand path from REG_EXPAND_SZ registry item.
   UString path;
@@ -73,14 +74,28 @@ int CSystemPage::AddIcon(const UString &iconPath, int iconIndex)
   path.ReleaseBuf_CalcLen(size);
   if (needLen == 0 || needLen >= size)
     path = iconPath;
-  const UINT num = ExtractIconExW(path, iconIndex, NULL, &hicon, 1);
-  if (num != 1 || !hicon)
+  if (iconIndex == -1)
+  {
+    // ExtractIconExW treats -1 as an icon-count query on some systems.
+    typedef HRESULT (WINAPI *Func_SHDefExtractIconW)(LPCWSTR, int, UINT, HICON *, HICON *, UINT);
+    const Func_SHDefExtractIconW extractIcon = Z7_GET_PROC_ADDRESS(
+        Func_SHDefExtractIconW, ::GetModuleHandleW(L"shell32.dll"), "SHDefExtractIconW");
+    if (!extractIcon || extractIcon(path, iconIndex, 0, NULL, &hicon, 0) != S_OK || !hicon)
+      return -1;
+  }
+  else
+  {
+    const UINT num = ExtractIconExW(path, iconIndex, NULL, &hicon, 1);
+    if (num != 1 || !hicon)
+      return -1;
+  }
   #endif
-    return -1;
   
-  _imageList.AddIcon(hicon);
+  const int imageIndex = _imageList.AddIcon(hicon);
   DestroyIcon(hicon);
-  return (int)(_numIcons++);
+  if (imageIndex >= 0)
+    _numIcons++;
+  return imageIndex;
 }
 
 
@@ -249,7 +264,7 @@ bool CSystemPage::OnInit()
       CModifiedExtInfo &mi = assoc.Pair[g];
       mi.ReadFromRegistry(GetHKey(g), GetSystemString(extInfo.Ext));
       mi.SetState(plug.IconPath);
-      mi.ImageIndex = AddIcon(mi.IconPath, mi.IconIndex);
+      mi.ImageIndex = AddIcon(mi.IconPath, mi.IconIndex, mi.IconIndexDefined);
       texts[g] = mi.GetString();
     }
     item.iImage = assoc.GetIconIndex();

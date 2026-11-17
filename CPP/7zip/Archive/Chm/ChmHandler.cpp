@@ -460,6 +460,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
           return E_FAIL;
         if (!testMode && !realOutStream)
           continue;
+        RINOK(extractCallback->PrepareOperation(askMode))
         if (!testMode)
         {
           const unsigned size = m_Database.NewFormatString.Len();
@@ -723,9 +724,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
               lzxDecoder->Set_KeepHistoryForNext(true);
               res = lzxDecoder->Code_WithExceedReadWrite(packBuf, compressedSizeT, kBlockSize); // rt.BlockSize;
               if (res == S_OK)
-                res = WriteStream(chmFolderOutStream,
+                RINOK(WriteStream(chmFolderOutStream,
                   lzxDecoder->GetUnpackData(),
-                  lzxDecoder->GetUnpackSize());
+                  lzxDecoder->GetUnpackSize()))
             }
           }
           

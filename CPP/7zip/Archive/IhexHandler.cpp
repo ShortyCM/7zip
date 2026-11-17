@@ -177,10 +177,10 @@ API_FUNC_static_IsArc IsArc_Ihex(const Byte *p, size_t size)
           return k_IsArc_Res_NO;
         return k_IsArc_Res_YES;
       }
-      if (p[2] != 0 ||
-          p[3] != 0 ||
-          p[4] != 0 ||
-          p[5] != 0)
+      if (p[2] != '0' ||
+          p[3] != '0' ||
+          p[4] != '0' ||
+          p[5] != '0')
         return k_IsArc_Res_NO;
       if (type == kType_Seg || type == kType_High)
       {
@@ -376,7 +376,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *, IArchiveOpenCallb
             return S_FALSE;
           }
           // here we use optimization trick for num shift calculation: (type == kType_Seg ? 4 : 16)
-          globalOffset = (UInt32)GetBe16(temp + 3) << (1u << type);
+          globalOffset = (((UInt32)temp[3] << 8) | temp[4]) << (1u << type);
         }
         else
         {

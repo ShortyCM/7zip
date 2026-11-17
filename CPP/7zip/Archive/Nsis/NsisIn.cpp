@@ -10,7 +10,13 @@
 #include "NsisIn.h"
 
 #define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
 
 // #define NUM_SPEED_TESTS 1000
 
@@ -6157,9 +6163,12 @@ HRESULT CInArchive::Open(IInStream *inStream, const UInt64 *maxCheckStartPositio
     CLimitedInStream *_limitedStreamSpec = new CLimitedInStream;
     _stream = _limitedStreamSpec;
     _limitedStreamSpec->SetStream(inStream);
-    _limitedStreamSpec->InitAndSeek(pos, FirstHeader.ArcSize);
-    DataStreamOffset -= pos;
-    res = Open2(buf + kStartHeaderSize, bufSize - kStartHeaderSize);
+    res = _limitedStreamSpec->InitAndSeek(pos, FirstHeader.ArcSize);
+    if (res == S_OK)
+    {
+      DataStreamOffset -= pos;
+      res = Open2(buf + kStartHeaderSize, bufSize - kStartHeaderSize);
+    }
   }
   catch(CInArchiveException &) { res = S_FALSE; }
   catch(...)

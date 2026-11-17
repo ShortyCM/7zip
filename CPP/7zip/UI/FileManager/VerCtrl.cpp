@@ -90,24 +90,24 @@ static bool ParseNumberString(const FString &s, UInt32 &number)
 }
 
 
-static void WriteFile(const FString &path, bool createAlways, const CFileDataInfo &fdi, const CPanel &panel)
+static bool WriteFile(const FString &path, bool createAlways, const CFileDataInfo &fdi, const CPanel &panel)
 {
   NIO::COutFile outFile;
   if (!outFile.Create_ALWAYS_or_NEW(path, createAlways)) // (createAlways = false) means CREATE_NEW
   {
     panel.MessageBox_LastError();
-    return;
+    return false;
   }
   UInt32 processedSize;
   if (!outFile.Write(fdi.Data, (UInt32)fdi.Data.Size(), processedSize))
   {
     panel.MessageBox_LastError();
-    return;
+    return false;
   }
   if (processedSize != fdi.Data.Size())
   {
     panel.MessageBox_Error(L"Write error");
-    return;
+    return false;
   }
   if (!outFile.SetTime(
       &fdi.Info.ftCreationTime,
@@ -115,14 +115,21 @@ static void WriteFile(const FString &path, bool createAlways, const CFileDataInf
       &fdi.Info.ftLastWriteTime))
   {
     panel.MessageBox_LastError();
-    return;
+    return false;
+  }
+
+  if (!outFile.Close())
+  {
+    panel.MessageBox_LastError();
+    return false;
   }
 
   if (!SetFileAttrib(path, fdi.Info.dwFileAttributes))
   {
     panel.MessageBox_LastError();
-    return;
+    return false;
   }
+  return true;
 }
 
 
@@ -277,9 +284,10 @@ void CApp::VerCtrl(unsigned id)
         return;
       }
       */
-      WriteFile(path2,
+      if (!WriteFile(path2,
           false,  // (createAlways = false) means CREATE_NEW
-          fdi, panel);
+          fdi, panel))
+        return;
     }
       
     if (!SetFileAttrib(path, fdi.Info.dwFileAttributes & ~(DWORD)FILE_ATTRIBUTE_READONLY))
@@ -349,10 +357,14 @@ void CApp::VerCtrl(unsigned id)
           else
           {
             const UInt64 cTime = FILETIME_to_UInt64(fdi.Info.ftCreationTime);
-            if (cTime > timeStamp)
-              outFile.SetTime(&mTime, NULL, &mTime);
-            else
-              outFile.SetMTime(&mTime);
+            if (!(cTime > timeStamp ?
+                outFile.SetTime(&mTime, NULL, &mTime) :
+                outFile.SetMTime(&mTime))
+                || !outFile.Close())
+            {
+              panel.MessageBox_LastError();
+              return;
+            }
           }
         }
       }

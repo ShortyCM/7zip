@@ -37,8 +37,9 @@ Z7_DEFINE_GUID(CLSID_CArchiveHandler,
 
 static inline HRESULT SetPropStrFromBin(const char *s, unsigned size, PROPVARIANT *value)
 {
-  if ((value->bstrVal = ::SysAllocStringByteLen(s, size)) != NULL)
-    value->vt = VT_BSTR;
+  if ((value->bstrVal = ::SysAllocStringByteLen(s, size)) == NULL)
+    return E_OUTOFMEMORY;
+  value->vt = VT_BSTR;
   return S_OK;
 }
 

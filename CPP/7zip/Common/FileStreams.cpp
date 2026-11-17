@@ -44,6 +44,7 @@ you should undefine it after including <sys/types.h>
 #include "../PropID.h"
 
 #include "FileStreams.h"
+#include "StreamUtils.h"
 
 static inline HRESULT GetLastError_HRESULT()
 {
@@ -97,21 +98,21 @@ CInFileStream::~CInFileStream()
 
 Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
   // printf("\nCInFileStream::Read size=%d, VirtPos=%8d\n", (unsigned)size, (int)VirtPos);
 
   #ifdef Z7_FILE_STREAMS_USE_WIN_FILE
   
   #ifdef Z7_DEVICE_FILE
-  if (processedSize)
-    *processedSize = 0;
-  if (size == 0)
-    return S_OK;
   if (File.IsDeviceFile)
   {
     if (File.SizeDefined)
     {
       if (VirtPos >= File.Size)
-        return VirtPos == File.Size ? S_OK : E_FAIL;
+        return S_OK;
       const UInt64 rem = File.Size - VirtPos;
       if (size > rem)
         size = (UInt32)rem;
@@ -173,7 +174,11 @@ Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize)
       }
       const bool result = File.Read1(Buf, readSize, BufSize);
       if (!result)
+      {
+        BufSize = 0;
+        PhyPos = (UInt64)(Int64)-1;
         return ConvertBoolToHRESULT(result);
+      }
 
       if (BufSize == 0)
         return S_OK;
@@ -192,7 +197,13 @@ Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize)
   #endif
 
   UInt32 realProcessedSize;
-  const bool result = File.ReadPart(data, size, realProcessedSize);
+  bool result;
+  do
+  {
+    result = File.ReadPart(data, size, realProcessedSize);
+    // Empty pipe messages do not mark the end of a stream.
+  }
+  while (result && realProcessedSize == 0 && GetFileType(File.GetHandle()) == FILE_TYPE_PIPE);
   if (processedSize)
     *processedSize = realProcessedSize;
 
@@ -206,8 +217,6 @@ Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize)
 
   #else // Z7_FILE_STREAMS_USE_WIN_FILE
   
-  if (processedSize)
-    *processedSize = 0;
   const ssize_t res = File.read_part(data, (size_t)size);
   if (res != -1)
   {
@@ -219,6 +228,14 @@ Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize)
 
   {
     const DWORD error = ::GetLastError();
+#ifdef Z7_FILE_STREAMS_USE_WIN_FILE
+    if (error == ERROR_BROKEN_PIPE || error == ERROR_MORE_DATA)
+    {
+      if (GetFileType(File.GetHandle()) == FILE_TYPE_PIPE)
+        return S_OK;
+      ::SetLastError(error);
+    }
+#endif
 #if 0
     if (File.IsStdStream && error == ERROR_BROKEN_PIPE)
       return S_OK; // end of stream
@@ -234,6 +251,10 @@ Z7_COM7F_IMF(CInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize)
 #ifdef UNDER_CE
 Z7_COM7F_IMF(CStdInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
   size_t s2 = fread(data, 1, size, stdin);
   int error = ferror(stdin);
   if (processedSize)
@@ -245,6 +266,10 @@ Z7_COM7F_IMF(CStdInFileStream::Read(void *data, UInt32 size, UInt32 *processedSi
 #else
 Z7_COM7F_IMF(CStdInFileStream::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
   // printf("\nCStdInFileStream::Read size = %d\n", (unsigned)size);
   #ifdef _WIN32
   
@@ -266,7 +291,14 @@ Z7_COM7F_IMF(CStdInFileStream::Read(void *data, UInt32 size, UInt32 *processedSi
     return GetLastError_noZero_HRESULT();
   }
   */
-  BOOL res = ::ReadFile(GetStdHandle(STD_INPUT_HANDLE), data, sizeTemp, &realProcessedSize, NULL);
+  const HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+  BOOL res;
+  do
+  {
+    res = ::ReadFile(handle, data, sizeTemp, &realProcessedSize, NULL);
+    // An empty pipe message does not mean that the stream has ended.
+  }
+  while (res != FALSE && realProcessedSize == 0 && GetFileType(handle) == FILE_TYPE_PIPE);
 
   /*
   printf("\nCInFileStream::Read: size=%d, processed=%8d res=%d 4rror=%3d\n",
@@ -276,8 +308,12 @@ Z7_COM7F_IMF(CStdInFileStream::Read(void *data, UInt32 size, UInt32 *processedSi
 
   if (processedSize)
     *processedSize = realProcessedSize;
-  if (res == FALSE && GetLastError() == ERROR_BROKEN_PIPE)
-    return S_OK;
+  if (res == FALSE)
+  {
+    const DWORD error = GetLastError();
+    if (error == ERROR_BROKEN_PIPE || error == ERROR_MORE_DATA)
+      return S_OK;
+  }
   return ConvertBoolToHRESULT(res != FALSE);
   
   #else
@@ -368,8 +404,8 @@ Z7_COM7F_IMF(CInFileStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPos
     switch (seekOrigin)
     {
       case STREAM_SEEK_SET: break;
-      case STREAM_SEEK_CUR: offset += VirtPos; break;
-      case STREAM_SEEK_END: offset += File.Size; break;
+      case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(VirtPos, offset, offset)) break;
+      case STREAM_SEEK_END: RINOK(Stream_AddOffset(File.Size, offset, offset)) break;
       default: return STG_E_INVALIDFUNCTION;
     }
     if (offset < 0)
@@ -808,6 +844,8 @@ Z7_COM7F_IMF(COutFileStream::Write(const void *data, UInt32 size, UInt32 *proces
   ProcessedSize += realProcessedSize;
   if (processedSize)
     *processedSize = realProcessedSize;
+  if (result && size != 0 && realProcessedSize == 0)
+    return E_FAIL;
   return ConvertBoolToHRESULT(result);
   
   #else
@@ -821,7 +859,7 @@ Z7_COM7F_IMF(COutFileStream::Write(const void *data, UInt32 size, UInt32 *proces
     *processedSize = (UInt32)realProcessedSize;
   if (res == -1)
     return GetLastError_HRESULT();
-  return S_OK;
+  return (size == 0 || realProcessedSize != 0) ? S_OK : E_FAIL;
   
   #endif
 }
@@ -866,6 +904,7 @@ HRESULT COutFileStream::GetSize(UInt64 *size)
 Z7_COM7F_IMF(CStdOutFileStream::Write(const void *data, UInt32 size, UInt32 *processedSize))
 {
   size_t s2 = fwrite(data, 1, size, stdout);
+  _size += s2;
   if (processedSize)
     *processedSize = s2;
   return (s2 == size) ? S_OK : E_FAIL;
@@ -896,6 +935,8 @@ Z7_COM7F_IMF(CStdOutFileStream::Write(const void *data, UInt32 size, UInt32 *pro
     // data = (const void *)((const Byte *)data + realProcessedSize);
     if (processedSize)
       *processedSize += realProcessedSize;
+    if (res && realProcessedSize == 0)
+      return E_FAIL;
   }
   return ConvertBoolToHRESULT(res != FALSE);
 
@@ -915,7 +956,7 @@ Z7_COM7F_IMF(CStdOutFileStream::Write(const void *data, UInt32 size, UInt32 *pro
   _size += (size_t)res;
   if (processedSize)
     *processedSize = (UInt32)res;
-  return S_OK;
+  return (size == 0 || res != 0) ? S_OK : E_FAIL;
   
   #endif
 }

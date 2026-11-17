@@ -21,23 +21,24 @@ extern const CCodecInfo *g_Codecs[];
 extern unsigned g_NumHashers;
 extern const CHasherInfo *g_Hashers[];
 
-static void SetPropFromAscii(const char *s, PROPVARIANT *prop) throw()
+static HRESULT SetPropFromAscii(const char *s, PROPVARIANT *prop) throw()
 {
   const UINT len = (UINT)strlen(s);
   BSTR dest = ::SysAllocStringLen(NULL, len);
-  if (dest)
-  {
-    for (UINT i = 0; i <= len; i++)
-      dest[i] = (Byte)s[i];
-    prop->bstrVal = dest;
-    prop->vt = VT_BSTR;
-  }
+  if (!dest)
+    return E_OUTOFMEMORY;
+  for (UINT i = 0; i <= len; i++)
+    dest[i] = (Byte)s[i];
+  prop->bstrVal = dest;
+  prop->vt = VT_BSTR;
+  return S_OK;
 }
 
 static inline HRESULT SetPropGUID(const GUID &guid, PROPVARIANT *value) throw()
 {
-  if ((value->bstrVal = ::SysAllocStringByteLen((const char *)&guid, sizeof(guid))) != NULL)
-    value->vt = VT_BSTR;
+  if ((value->bstrVal = ::SysAllocStringByteLen((const char *)&guid, sizeof(guid))) == NULL)
+    return E_OUTOFMEMORY;
+  value->vt = VT_BSTR;
   return S_OK;
 }
 
@@ -207,8 +208,7 @@ STDAPI GetMethodProperty(UInt32 codecIndex, PROPID propID, PROPVARIANT *value)
       value->vt = VT_UI8;
       break;
     case NMethodPropID::kName:
-      SetPropFromAscii(codec.Name, value);
-      break;
+      return SetPropFromAscii(codec.Name, value);
     case NMethodPropID::kDecoder:
       if (codec.CreateDecoder)
         return MethodToClassID(k_7zip_GUID_Data3_Decoder, codec.Id, value);
@@ -274,7 +274,7 @@ static int FindHasherClassId(const GUID *clsid) throw()
       clsid->Data3 != k_7zip_GUID_Data3_Hasher)
     return -1;
   const UInt64 id = GetUi64(clsid->Data4);
-  for (unsigned i = 0; i < g_NumCodecs; i++)
+  for (unsigned i = 0; i < g_NumHashers; i++)
     if (id == g_Hashers[i]->Id)
       return (int)i;
   return -1;
@@ -283,6 +283,7 @@ static int FindHasherClassId(const GUID *clsid) throw()
 static HRESULT CreateHasher2(UInt32 index, IHasher **hasher)
 {
   COM_TRY_BEGIN
+  *hasher = NULL;
   *hasher = g_Hashers[index]->CreateHasher();
   if (*hasher)
     (*hasher)->AddRef();
@@ -314,8 +315,7 @@ STDAPI GetHasherProp(UInt32 codecIndex, PROPID propID, PROPVARIANT *value)
       value->vt = VT_UI8;
       break;
     case NMethodPropID::kName:
-      SetPropFromAscii(codec.Name, value);
-      break;
+      return SetPropFromAscii(codec.Name, value);
     case NMethodPropID::kEncoder:
       if (codec.CreateHasher)
         return MethodToClassID(k_7zip_GUID_Data3_Hasher, codec.Id, value);
@@ -334,6 +334,7 @@ STDAPI GetHashers(IHashers **hashers);
 STDAPI GetHashers(IHashers **hashers)
 {
   COM_TRY_BEGIN
+  *hashers = NULL;
   *hashers = new CHashers;
   if (*hashers)
     (*hashers)->AddRef();

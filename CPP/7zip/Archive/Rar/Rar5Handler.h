@@ -181,7 +181,7 @@ struct CLinkInfo
 struct CItem
 {
   UInt32 CommonFlags;
-  UInt32 Flags;
+  UInt64 Flags;
 
   Byte RecordType;
   bool Version_Defined;

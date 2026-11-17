@@ -29,7 +29,14 @@ void Md5_Init(CMd5 *p)
 #define Z7_MD5_USE_DATA32_ARRAY
 #endif
 
-#define LOAD_DATA(i)  GetUi32((const UInt32 *)(const void *)data + (i))
+static Z7_FORCE_INLINE UInt32 Md5_GetUi32(const Byte *data)
+{
+  UInt32 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi32(&value);
+}
+
+#define LOAD_DATA(i)  Md5_GetUi32(data + (i) * 4)
 
 #ifdef Z7_MD5_USE_DATA32_ARRAY
 #define D(i)  data32[i]
@@ -186,10 +193,18 @@ void Md5_Final(CMd5 *p, Byte *digest)
   }
   Md5_UpdateBlock(p);
 
-  SetUi32(digest,      p->state[0])
-  SetUi32(digest + 4,  p->state[1])
-  SetUi32(digest + 8,  p->state[2])
-  SetUi32(digest + 12, p->state[3])
+  {
+    unsigned i;
+    for (i = 0; i < MD5_NUM_DIGEST_WORDS; ++i)
+    {
+      const UInt32 value = p->state[i];
+      digest[0] = (Byte)value;
+      digest[1] = (Byte)(value >> 8);
+      digest[2] = (Byte)(value >> 16);
+      digest[3] = (Byte)(value >> 24);
+      digest += 4;
+    }
+  }
   
   Md5_Init(p);
 }

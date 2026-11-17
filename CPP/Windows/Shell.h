@@ -33,6 +33,8 @@ public:
   void Free();
   void Attach(LPITEMIDLIST object)
   {
+    if (m_Object == object)
+      return;
     Free();
     m_Object = object;
   }

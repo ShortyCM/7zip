@@ -755,12 +755,12 @@ bool CHashPair::ParseCksum(const char *s)
   const char *end;
   
   const UInt32 crc = ConvertStringToUInt32(s, &end);
-  if (*end != ' ')
+  if (end == s || *end != ' ')
     return false;
-  end++;
-  
-  const UInt64 size = ConvertStringToUInt64(end, &end);
-  if (*end != ' ')
+  const char *sizeStart = end + 1;
+
+  const UInt64 size = ConvertStringToUInt64(sizeStart, &end);
+  if (end == sizeStart || *end != ' ')
     return false;
   end++;
   
@@ -1122,6 +1122,7 @@ static void Add_OptSpace_String(UString &dest, const char *src)
 
 Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -1188,12 +1189,13 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 
 Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *value))
 {
-  // COM_TRY_BEGIN
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   const CHashPair &hp = HashPairs[index];
   switch (propID)
@@ -1246,7 +1248,7 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
   }
   prop.Detach(value);
   return S_OK;
-  // COM_TRY_END
+  COM_TRY_END
 }
 
 

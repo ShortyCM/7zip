@@ -41,7 +41,19 @@
 
 using namespace NWindows;
 
-#define Get32(p) GetUi32(p)
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 namespace NArchive {
 namespace NRar5 {
@@ -63,22 +75,22 @@ static const char * const kHostOS[] =
 };
 
 
-static const char * const k_ArcFlags[] =
+static const CUInt32PCharPair k_ArcFlags[] =
 {
-    "Volume"
-  , "VolumeField"
-  , "Solid"
-  , "Recovery"
-  , "Lock" // 4
+    { 0, "Volume" }
+  , { 1, "VolumeField" }
+  , { 2, "Solid" }
+  , { 3, "Recovery" }
+  , { 4, "Lock" }
 };
 
 
-static const char * const k_FileFlags[] =
+static const CUInt32PCharPair k_FileFlags[] =
 {
-    "Dir"
-  , "UnixTime"
-  , "CRC"
-  , "UnknownSize"
+    { 0, "Dir" }
+  , { 1, "UnixTime" }
+  , { 2, "CRC" }
+  , { 3, "UnknownSize" }
 };
 
 
@@ -796,7 +808,7 @@ bool CInArcInfo::CMetadata::Parse(const Byte *p, size_t size)
     {
       if (size < 4)
         return false;
-      CTime = GetUi32(p);
+      CTime = Get32(p);
       p += 4;
       size -= 4;
     }
@@ -804,7 +816,7 @@ bool CInArcInfo::CMetadata::Parse(const Byte *p, size_t size)
     {
       if (size < 8)
         return false;
-      CTime = GetUi64(p);
+      CTime = Get64(p);
       p += 8;
       size -= 8;
     }
@@ -948,7 +960,7 @@ bool CInArchive::ReadFileHeader(const CHeader &header, CItem &item)
   {
     UInt64 flags64;
     if (!ReadVar(flags64)) return false;
-    item.Flags = (UInt32)flags64;
+    item.Flags = flags64;
   }
 
   if (!ReadVar(item.Size)) return false;
@@ -1444,7 +1456,9 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
       AString s;
       if (arcInfo)
       {
-        s = FlagsToString(k_ArcFlags, Z7_ARRAY_SIZE(k_ArcFlags), (UInt32)arcInfo->Flags);
+        NCOM::CPropVariant flags;
+        Flags64ToProp(k_ArcFlags, Z7_ARRAY_SIZE(k_ArcFlags), arcInfo->Flags, flags);
+        s.SetFromWStr_if_Ascii(flags.bstrVal);
         if (arcInfo->Extra_Error)
           s.Add_OptSpaced("Extra-ERROR");
         if (arcInfo->UnsupportedFeature)
@@ -2065,10 +2079,13 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
       if (item.ACL >= 0)
         s.Add_OptSpaced("ACL");
 
-      const UInt32 flags = item.Flags;
+      const UInt64 flags = item.Flags;
       if (flags != 0)
       {
-        const AString s2 = FlagsToString(k_FileFlags, Z7_ARRAY_SIZE(k_FileFlags), flags);
+        NCOM::CPropVariant flagProp;
+        Flags64ToProp(k_FileFlags, Z7_ARRAY_SIZE(k_FileFlags), flags, flagProp);
+        AString s2;
+        s2.SetFromWStr_if_Ascii(flagProp.bstrVal);
         if (!s2.IsEmpty())
           s.Add_OptSpaced(s2);
       }
@@ -3354,6 +3371,7 @@ void CHandler::InitDefaults()
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   InitDefaults();
 
   for (UInt32 i = 0; i < numProps; i++)
@@ -3392,6 +3410,7 @@ Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVAR
     }
   }
   return S_OK;
+  COM_TRY_END
 }
 
 

@@ -2,11 +2,41 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../C/CpuArch.h"
 #include "../../../C/RotateDefs.h"
 
 #include "HuffmanDecoder.h"
 #include "XpressDecoder.h"
+
+static Z7_FORCE_INLINE UInt16 Xpress_Load16(const void *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Xpress_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+template <class T>
+static Z7_FORCE_INLINE void Xpress_CopyWord(void *dest, const void *src)
+{
+  T value;
+  memcpy(&value, src, sizeof(value));
+  memcpy(dest, &value, sizeof(value));
+}
+
+template <class T>
+static Z7_FORCE_INLINE void Xpress_StoreWord(void *dest, T value)
+{
+  memcpy(dest, &value, sizeof(value));
+}
 
 #ifdef MY_CPU_LE_UNALIGN
   #define Z7_XPRESS_DEC_USE_UNALIGNED_COPY
@@ -18,8 +48,8 @@
 
     #define COPY_CHUNK_4_2(dest, src) \
     { \
-      ((UInt32 *)(void *)dest)[0] = ((const UInt32 *)(const void *)src)[0]; \
-      ((UInt32 *)(void *)dest)[1] = ((const UInt32 *)(const void *)src)[1]; \
+      Xpress_CopyWord<UInt32>(dest, src); \
+      Xpress_CopyWord<UInt32>(dest + 4, src + 4); \
       src += 4 * 2; \
       dest += 4 * 2; \
     }
@@ -80,8 +110,8 @@
 
     #define COPY_CHUNK(dest, src) \
     { \
-      ((UInt64 *)(void *)dest)[0] = ((const UInt64 *)(const void *)src)[0]; \
-      ((UInt64 *)(void *)dest)[1] = ((const UInt64 *)(const void *)src)[1]; \
+      Xpress_CopyWord<UInt64>(dest, src); \
+      Xpress_CopyWord<UInt64>(dest + 8, src + 8); \
       src += 8 * 2; \
       dest += 8 * 2; \
     }
@@ -143,8 +173,8 @@ void CopyMatch_1(Byte *dest, const Byte *dest_lim)
           Z7_PRAGMA_OPT_DISABLE_LOOP_UNROLL_VECTORIZE
           do
           {
-            ((UInt64 *)(void *)dest)[0] = v64;
-            ((UInt64 *)(void *)dest)[1] = v64;
+            Xpress_StoreWord<UInt64>(dest, v64);
+            Xpress_StoreWord<UInt64>(dest + 8, v64);
             dest += 16;
           }
           while (dest < dest_lim);
@@ -156,11 +186,11 @@ void CopyMatch_1(Byte *dest, const Byte *dest_lim)
           v |= v << 16;
           do
           {
-            ((UInt32 *)(void *)dest)[0] = v;
-            ((UInt32 *)(void *)dest)[1] = v;
+            Xpress_StoreWord<UInt32>(dest, v);
+            Xpress_StoreWord<UInt32>(dest + 4, v);
             dest += 8;
-            ((UInt32 *)(void *)dest)[0] = v;
-            ((UInt32 *)(void *)dest)[1] = v;
+            Xpress_StoreWord<UInt32>(dest, v);
+            Xpress_StoreWord<UInt32>(dest + 4, v);
             dest += 8;
           }
           while (dest < dest_lim);
@@ -222,11 +252,11 @@ void CopyMatch_Non1(Byte *dest, size_t offset, const Byte *dest_lim)
       if (offset == 2)
       {
 #if defined(Z7_XPRESS_DEC_USE_UNALIGNED_COPY)
-        UInt32 w0 = GetUi16(src);
+        UInt32 w0 = Xpress_Load16(src);
         w0 += w0 << 16;
         do
         {
-          SetUi32(dest, w0)
+          Xpress_StoreWord<UInt32>(dest, w0);
           dest += 4;
         }
         while (dest < dest_lim);
@@ -246,11 +276,11 @@ void CopyMatch_Non1(Byte *dest, size_t offset, const Byte *dest_lim)
       {
         const unsigned b0 = src[0];
 #if defined(Z7_XPRESS_DEC_USE_UNALIGNED_COPY)
-        const unsigned w1 = GetUi16(src + 1);
+        const unsigned w1 = Xpress_Load16(src + 1);
         do
         {
           dest[0] = (Byte)b0;
-          SetUi16(dest + 1, (UInt16)w1)
+          Xpress_StoreWord<UInt16>(dest + 1, (UInt16)w1);
           dest += 3;
         }
         while (dest < dest_lim);
@@ -279,7 +309,7 @@ namespace NXpress {
     if (BitPos > 16) { \
       if (in >= lim) return S_FALSE; \
       BitPos -= 16; \
-      Value |= (UInt32)GetUi16(in) << BitPos; \
+      Value |= (UInt32)Xpress_Load16(in) << BitPos; \
       in += 2; }
 
 #define MOVE_POS(bs, numBits) \
@@ -318,10 +348,10 @@ HRESULT Decode_WithExceedWrite(const Byte *in, size_t inSize, Byte *out, size_t 
   const Byte *lim = in + inSize - 1;  // points to last byte
   in += kNumSyms / 2;
 #ifdef MY_CPU_LE_UNALIGN
-  Value = GetUi32(in);
+  Value = Xpress_Load32(in);
   Value = rotlFixed(Value, 16);
 #else
-  Value = ((UInt32)GetUi16(in) << 16) | GetUi16(in + 2);
+  Value = ((UInt32)Xpress_Load16(in) << 16) | Xpress_Load16(in + 2);
 #endif
     
   in += 4;
@@ -358,7 +388,7 @@ HRESULT Decode_WithExceedWrite(const Byte *in, size_t inSize, Byte *out, size_t 
         {
           if (in >= lim)
             return S_FALSE;
-          len = GetUi16(in);
+          len = Xpress_Load16(in);
           in += 2;
         }
         else

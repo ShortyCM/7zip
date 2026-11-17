@@ -417,7 +417,9 @@ void COutArchive::CreateStreamForCompressing(CMyComPtr<IOutStream> &outStream)
 {
   COffsetOutStream *streamSpec = new COffsetOutStream;
   outStream = streamSpec;
-  streamSpec->Init(m_Stream, m_Base + m_CurPos);
+  const HRESULT res = streamSpec->Init(m_Stream, m_Base + m_CurPos);
+  if (res != S_OK)
+    throw CSystemException(res);
 }
 
 void COutArchive::CreateStreamForCopying(CMyComPtr<ISequentialOutStream> &outStream)

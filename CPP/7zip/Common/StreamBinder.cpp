@@ -47,7 +47,9 @@ HRESULT CStreamBinder::Create_ReInit()
 
   // _canWrite_Semaphore.Close();
   // we need at least 3 items of maxCount: 1 for normal unlock in Read(), 2 items for unlock in CloseRead_CallOnce()
-  _canWrite_Semaphore.OptCreateInit(0, 3);
+  const WRes wres = _canWrite_Semaphore.OptCreateInit(0, 3);
+  if (wres != 0)
+    return HRESULT_FROM_WIN32(wres);
 
   // _readingWasClosed = false;
   _readingWasClosed2 = false;

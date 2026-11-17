@@ -4,6 +4,7 @@
 #define ZIP7_INC_COMMON_MY_BUFFER_H
 
 #include <string.h>
+#include <functional>
 
 #include "Defs.h"
 #include "MyTypes.h"
@@ -84,8 +85,21 @@ public:
 
   void CopyFrom(const T *data, size_t size)
   {
+    if (size != 0 && size != _size && _items)
+    {
+      const std::less<const T *> less;
+      if (!less(data, _items) && less(data, _items + _size))
+      {
+        T *newBuffer = new T[size];
+        memcpy(newBuffer, data, size * sizeof(T));
+        delete []_items;
+        _items = newBuffer;
+        _size = size;
+        return;
+      }
+    }
     Alloc(size);
-    if (size != 0)
+    if (size != 0 && data != _items)
       memcpy(_items, data, size * sizeof(T));
   }
 

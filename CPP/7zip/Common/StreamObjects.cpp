@@ -5,6 +5,9 @@
 #include "../../../C/Alloc.h"
 
 #include "StreamObjects.h"
+#include "StreamUtils.h"
+
+#include <functional>
 
 Z7_COM7F_IMF(CBufferInStream::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
@@ -17,7 +20,7 @@ Z7_COM7F_IMF(CBufferInStream::Read(void *data, UInt32 size, UInt32 *processedSiz
   size_t rem = Buf.Size() - (size_t)_pos;
   if (rem > size)
     rem = (size_t)size;
-  memcpy(data, (const Byte *)Buf + (size_t)_pos, rem);
+  memmove(data, (const Byte *)Buf + (size_t)_pos, rem);
   _pos += rem;
   if (processedSize)
     *processedSize = (UInt32)rem;
@@ -29,8 +32,8 @@ Z7_COM7F_IMF(CBufferInStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newP
   switch (seekOrigin)
   {
     case STREAM_SEEK_SET: break;
-    case STREAM_SEEK_CUR: offset += _pos; break;
-    case STREAM_SEEK_END: offset += Buf.Size(); break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_pos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset((UInt64)Buf.Size(), offset, offset)) break;
     default: return STG_E_INVALIDFUNCTION;
   }
   if (offset < 0)
@@ -52,7 +55,7 @@ Z7_COM7F_IMF(CBufInStream::Read(void *data, UInt32 size, UInt32 *processedSize))
   size_t rem = _size - (size_t)_pos;
   if (rem > size)
     rem = (size_t)size;
-  memcpy(data, _data + (size_t)_pos, rem);
+  memmove(data, _data + (size_t)_pos, rem);
   _pos += rem;
   if (processedSize)
     *processedSize = (UInt32)rem;
@@ -64,8 +67,8 @@ Z7_COM7F_IMF(CBufInStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosi
   switch (seekOrigin)
   {
     case STREAM_SEEK_SET: break;
-    case STREAM_SEEK_CUR: offset += _pos; break;
-    case STREAM_SEEK_END: offset += _size; break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_pos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset((UInt64)_size, offset, offset)) break;
     default: return STG_E_INVALIDFUNCTION;
   }
   if (offset < 0)
@@ -138,10 +141,18 @@ Z7_COM7F_IMF(CDynBufSeqOutStream::Write(const void *data, UInt32 size, UInt32 *p
     *processedSize = 0;
   if (size == 0)
     return S_OK;
+  const Byte *oldBuf = GetBuffer();
+  const Byte *source = (const Byte *)data;
+  const std::less<const Byte *> less;
+  const bool isInternal = oldBuf && !less(source, oldBuf)
+      && less(source, oldBuf + _buffer.GetCapacity());
+  const size_t offset = isInternal ? (size_t)(source - oldBuf) : 0;
   Byte *buf = GetBufPtrForWriting(size);
   if (!buf)
     return E_OUTOFMEMORY;
-  memcpy(buf, data, size);
+  if (isInternal)
+    data = GetBuffer() + offset;
+  memmove(buf, data, size);
   UpdateSize(size);
   if (processedSize)
     *processedSize = size;
@@ -155,7 +166,7 @@ Z7_COM7F_IMF(CBufPtrSeqOutStream::Write(const void *data, UInt32 size, UInt32 *p
     rem = (size_t)size;
   if (rem != 0)
   {
-    memcpy(_buffer + _pos, data, rem);
+    memmove(_buffer + _pos, data, rem);
     _pos += rem;
   }
   if (processedSize)
@@ -185,8 +196,12 @@ void CCachedInStream::Free() throw()
 
 bool CCachedInStream::Alloc(unsigned blockSizeLog, unsigned numBlocksLog) throw()
 {
+  const unsigned numBits = sizeof(size_t) * 8;
+  // Each cache tag requires 8 bytes.
+  if (blockSizeLog >= numBits || numBlocksLog >= numBits - 3)
+    return false;
   unsigned sizeLog = blockSizeLog + numBlocksLog;
-  if (sizeLog >= sizeof(size_t) * 8)
+  if (sizeLog >= numBits)
     return false;
   size_t dataSize = (size_t)1 << sizeLog;
   if (!_data || dataSize != _dataSize)
@@ -277,8 +292,8 @@ Z7_COM7F_IMF(CCachedInStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newP
   switch (seekOrigin)
   {
     case STREAM_SEEK_SET: break;
-    case STREAM_SEEK_CUR: offset += _pos; break;
-    case STREAM_SEEK_END: offset += _size; break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_pos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset(_size, offset, offset)) break;
     default: return STG_E_INVALIDFUNCTION;
   }
   if (offset < 0)

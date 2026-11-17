@@ -103,7 +103,7 @@ class CSystemPage: public NWindows::NControl::CPropertyPage
     #endif
   }
 
-  int AddIcon(const UString &path, int iconIndex);
+  int AddIcon(const UString &path, int iconIndex, bool iconIndexDefined = false);
   unsigned GetRealIndex(unsigned listIndex) const { return listIndex; }
   void RefreshListItem(unsigned group, unsigned listIndex);
   void ChangeState(unsigned group, const CUIntVector &indices);

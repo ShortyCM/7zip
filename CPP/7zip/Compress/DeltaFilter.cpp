@@ -9,6 +9,7 @@
 #include "../ICoder.h"
 
 #include "../Common/RegisterCodec.h"
+#include "../Common/StreamUtils.h"
 
 namespace NCompress {
 namespace NDelta {
@@ -80,7 +81,7 @@ Z7_COM7F_IMF(CEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIA
 Z7_COM7F_IMF(CEncoder::WriteCoderProperties(ISequentialOutStream *outStream))
 {
   const Byte prop = (Byte)(_delta - 1);
-  return outStream->Write(&prop, 1, NULL);
+  return WriteStream(outStream, &prop, 1);
 }
 
 #endif

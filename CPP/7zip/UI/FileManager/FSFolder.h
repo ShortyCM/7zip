@@ -145,8 +145,8 @@ class CFSFolder Z7_final:
   void GetAbsPath(const wchar_t *name, FString &absPath);
   HRESULT BindToFolderSpec(CFSTR name, IFolderFolder **resultFolder);
 
-  bool LoadComments();
-  bool SaveComments();
+  HRESULT LoadComments(AString *original = NULL);
+  HRESULT SaveComments(const AString &original);
   HRESULT LoadSubItems(int dirItem, const FString &path);
   
   #ifdef FS_SHOW_LINKS_INFO
@@ -201,10 +201,13 @@ struct CCopyStateIO
 
   CCopyStateIO(): TotalSize(0), StartPos(0), DeleteSrcFile(false) {}
 
-  HRESULT MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib = INVALID_FILE_ATTRIBUTES);
+  HRESULT MyCopyFile(CFSTR inPath, CFSTR outPath, DWORD attrib = INVALID_FILE_ATTRIBUTES,
+      bool createAlways = true);
 };
 
 HRESULT SendLastErrorMessage(IFolderOperationsExtractCallback *callback, const FString &fileName);
+
+bool AreFilePathsEqual(const FString &src, const FString &dest);
 
 /* destDirPrefix is allowed to be:
    "full_path\" or "full_path:" for alt streams */

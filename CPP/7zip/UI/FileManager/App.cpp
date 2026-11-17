@@ -224,7 +224,7 @@ static void AddButton(
     const CButtonInfo &butInfo, bool showText, bool large)
 {
   TBBUTTON but;
-  but.iBitmap = 0;
+  but.iBitmap = I_IMAGENONE;
   but.idCommand = butInfo.CommandID;
   but.fsState = TBSTATE_ENABLED;
   but.fsStyle = TBSTYLE_BUTTON;
@@ -235,14 +235,15 @@ static void AddButton(
   if (showText)
     but.iString = (INT_PTR)(LPCWSTR)s;
 
-  but.iBitmap = imageList.GetImageCount();
   HBITMAP b = ::LoadBitmap(g_hInstance,
       large ?
       MAKEINTRESOURCE(butInfo.BitmapResID):
       MAKEINTRESOURCE(butInfo.Bitmap2ResID));
   if (b)
   {
-    imageList.AddMasked(b, RGB(255, 0, 255));
+    const int imageIndex = imageList.AddMasked(b, RGB(255, 0, 255));
+    if (imageIndex >= 0)
+      but.iBitmap = imageIndex;
     ::DeleteObject(b);
   }
   #ifdef _UNICODE
@@ -905,7 +906,8 @@ void CApp::OnSetSubFolder(unsigned srcPanelIndex)
   if (!newFolder)
     return;
 
-  destPanel.CloseOpenFolders();
+  if (destPanel.CloseOpenFolders(true) != S_OK)
+    return;
   destPanel.SetNewFolder(newFolder);
   destPanel.RefreshListCtrl();
 }

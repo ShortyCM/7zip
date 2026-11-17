@@ -3,6 +3,9 @@
 #include "StdAfx.h"
 
 #include "../../../Windows/Clipboard.h"
+#include "../../../Windows/ErrorMsg.h"
+
+#include "../Explorer/MyMessages.h"
 
 #include "EditDialog.h"
 #include "ListViewDialog.h"
@@ -33,6 +36,7 @@ static void ListView_GetSelected(NControl::CListView &listView, CUIntVector &vec
 
 bool CListViewDialog::OnInit()
 {
+  StringsWereChanged = false;
   #ifdef Z7_LANG
   LangSetDlgItems(*this, NULL, 0);
   #endif
@@ -102,7 +106,12 @@ bool CListViewDialog::OnInit()
   
   FOR_VECTOR (i, Strings)
   {
-    _listView.InsertItem(i, Strings[i]);
+    if (_listView.InsertItem(i, Strings[i]) < 0)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage(ERROR_NOT_ENOUGH_MEMORY));
+      CModalDialog::OnCancel();
+      return false;
+    }
 
     if (NumColumns > 1 && i < Values.Size())
     {
@@ -124,8 +133,6 @@ bool CListViewDialog::OnInit()
   _listView.SetColumnWidthAuto(0);
   if (NumColumns > 1)
     _listView.SetColumnWidthAuto(1);
-  StringsWereChanged = false;
-
   NormalizeSize();
   return CModalDialog::OnInit();
 }

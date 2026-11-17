@@ -552,11 +552,14 @@ HRESULT CompressFiles(const CObjectVector<PluginPanelItem> &pluginPanelItems)
     {
       CUIntVector indices;
       AStringVector archiverNames;
+      int selectedMenuIndex = -1;
       FOR_VECTOR (k, codecs->Formats)
       {
         const CArcInfoEx &arc = codecs->Formats[k];
         if (arc.UpdateEnabled)
         {
+          if (k == (unsigned)archiverIndex)
+            selectedMenuIndex = (int)indices.Size();
           indices.Add(k);
           archiverNames.Add(GetOemString(arc.Name));
         }
@@ -564,7 +567,7 @@ HRESULT CompressFiles(const CObjectVector<PluginPanelItem> &pluginPanelItems)
     
       const int index = g_StartupInfo.Menu(FMENU_AUTOHIGHLIGHT,
           g_StartupInfo.GetMsgString(NMessageID::kUpdateSelectArchiverMenuTitle),
-          NULL, archiverNames, archiverIndex);
+          NULL, archiverNames, selectedMenuIndex);
       if (index >= 0)
       {
         const CArcInfoEx &prevArchiverInfo = codecs->Formats[prevFormat];
@@ -589,7 +592,15 @@ HRESULT CompressFiles(const CObjectVector<PluginPanelItem> &pluginPanelItems)
         prevFormat = archiverIndex;
         
         if (arcInfo.Flags_KeepName())
-          arcName = archiveNameSrc;
+        {
+          unsigned namePos = (unsigned)(arcName.ReverseFind_PathSepar() + 1);
+          #if defined(_WIN32) && !defined(UNDER_CE)
+          if (namePos == 0 && NName::IsDrivePath2(arcName))
+            namePos = 2;
+          #endif
+          arcName.DeleteFrom(namePos);
+          arcName += archiveNameSrc;
+        }
         SetArcName(arcName, arcInfo);
       }
       continue;
@@ -679,7 +690,7 @@ HRESULT CompressFiles(const CObjectVector<PluginPanelItem> &pluginPanelItems)
     fileNamePointers[i] = fileNames[i];
 
   outArchive->SetFolder(NULL);
-  outArchive->SetFiles(L"", fileNamePointers, fileNames.Size());
+  RINOK(outArchive->SetFiles(L"", fileNamePointers, fileNames.Size()))
   BYTE actionSetByte[NUpdateArchive::NPairState::kNumValues];
   for (i = 0; i < NUpdateArchive::NPairState::kNumValues; i++)
     actionSetByte[i] = (BYTE)actionSet->StateActions[i];

@@ -180,7 +180,8 @@ int CALLBACK CompareItems(LPARAM lParam1, LPARAM lParam2, LPARAM lpData);
 int CALLBACK CompareItems(LPARAM lParam1, LPARAM lParam2, LPARAM lpData)
 {
   if (lpData == 0) return 0;
-  if (lParam1 == (int)kParentIndex) return -1;
+  if (lParam1 == (int)kParentIndex)
+    return lParam2 == (int)kParentIndex ? 0 : -1;
   if (lParam2 == (int)kParentIndex) return 1;
 
   const CPanel *panel = (CPanel*)lpData;
@@ -217,7 +218,7 @@ int CALLBACK CompareItems(LPARAM lParam1, LPARAM lParam2, LPARAM lpData)
   }
   if (res == 0)
     res = MyCompare(lParam1, lParam2); // order of LoadSubItems()
-  return panel->_ascending ? res: -res;
+  return panel->_ascending ? res : MyCompare(0, res);
 }
 
 

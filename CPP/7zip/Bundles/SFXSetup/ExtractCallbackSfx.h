@@ -49,7 +49,7 @@ class CExtractCallbackImp Z7_final:
   FILETIME _defaultMTime;
   UInt32 _defaultAttributes;
 
-  void CreateComplexDirectory(const UStringVector &dirPathParts);
+  HRESULT CreateComplexDirectory(const UStringVector &dirPathParts);
 public:
   #ifndef _NO_PROGRESS
   CProgressDialog ProgressDialog;

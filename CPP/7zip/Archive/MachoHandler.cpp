@@ -18,7 +18,13 @@
 #include "../Compress/CopyCoder.h"
 
 static UInt32 Get32(const Byte *p, bool be) { if (be) return GetBe32a(p); return GetUi32a(p); }
-static UInt64 Get64(const Byte *p, bool be) { if (be) return GetBe64a(p); return GetUi64a(p); }
+static UInt64 Get64(const Byte *p, bool be)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  if (be) return GetBe64a(&value);
+  return GetUi64a(&value);
+}
 
 using namespace NWindows;
 using namespace NCOM;
@@ -153,6 +159,8 @@ static const CCpuRecord k_CpuRecords[] =
 #define SECT_ATTR_MASK 0xffffff00
 
 #define SECT_ATTR_ZEROFILL 1
+#define SECT_ATTR_GB_ZEROFILL 0xc
+#define SECT_ATTR_THREAD_LOCAL_ZEROFILL 0x12
 
 static const char * const g_SectTypes[] =
 {
@@ -627,7 +635,12 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
     }
     case kpidOffset:  prop = item.Pa; break;
     case kpidVa:  prop = item.Va; break;
-    case kpidClusterSize:  prop = (UInt32)1 << item.Align; break;
+    case kpidClusterSize:
+      if (item.Align < 32)
+        prop = (UInt32)1 << item.Align;
+      else if (item.Align < 64)
+        prop = (UInt64)1 << item.Align;
+      break;
   }
   prop.Detach(value);
   return S_OK;
@@ -811,10 +824,16 @@ HRESULT CHandler::Open2(ISequentialInStream *stream)
         // sect.reloff = dest[2];
         // sect.nreloc = dest[3];
         sect.Flags = dest[4];
-        if ((sect.Flags & SECT_TYPE_MASK) == SECT_ATTR_ZEROFILL)
-          sect.PSize = 0;
-        else
-          sect.PSize = sect.VSize;
+        switch (sect.Flags & SECT_TYPE_MASK)
+        {
+          case SECT_ATTR_ZEROFILL:
+          case SECT_ATTR_GB_ZEROFILL:
+          case SECT_ATTR_THREAD_LOCAL_ZEROFILL:
+            sect.PSize = 0;
+            break;
+          default:
+            sect.PSize = sect.VSize;
+        }
         /* note: object file ".o" has empty name in SEGMENT record.
            But there is Segment_Name in SECTION record.
            so we can use Segment_Name from section record.

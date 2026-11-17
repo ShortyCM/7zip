@@ -339,9 +339,26 @@ static const Byte kProps[] =
 IMP_IInArchive_Props
 IMP_IInArchive_ArcProps
 
+static AString DecodeXmlString(AString text, bool trimLeft = false)
+{
+  z7_xml_DecodeString(text);
+  if (trimLeft)
+  {
+    unsigned pos = 0;
+    for (; pos < text.Len(); ++pos)
+    {
+      const char c = text[pos];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+        break;
+    }
+    text.DeleteFrontal(pos);
+  }
+  return text;
+}
+
 static bool ParseUInt64(const CXmlItem &item, const char *name, UInt64 &res)
 {
-  const AString s (item.GetSubStringForTag(name));
+  const AString s (DecodeXmlString(item.GetSubStringForTag(name), true));
   if (s.IsEmpty())
     return false;
   const char *end;
@@ -357,7 +374,7 @@ static bool ParseUInt64(const CXmlItem &item, const char *name, UInt64 &res)
 
 static UInt64 ParseTime(const CXmlItem &item, const char *name /* , bool z_isRequired */ )
 {
-  const AString s (item.GetSubStringForTag(name));
+  const AString s (DecodeXmlString(item.GetSubStringForTag(name), true));
   if (s.Len() < 20 /* (z_isRequired ? 20u : 19u) */)
     return 0;
   const char *p = s;
@@ -389,8 +406,8 @@ static void ParseChecksum(const CXmlItem &item, const char *name, CCheckSum &che
   const CXmlItem *checkItem = item.FindSubTag_GetPtr(name);
   if (!checkItem)
     return; // false;
-  checksum.Style = checkItem->GetPropVal("style");
-  const AString s (checkItem->GetSubString());
+  checksum.Style = DecodeXmlString(checkItem->GetPropVal("style"));
+  const AString s (DecodeXmlString(checkItem->GetSubString(), true));
   if ((s.Len() & 1) == 0 && s.Len() <= (2u << 7)) // 1024-bit max
   {
     const size_t size = s.Len() / 2;
@@ -421,7 +438,7 @@ static bool AddItem(const CXmlItem &item, CObjectVector<CFile> &files, int paren
     CFile file(parent);
     parent = (int)files.Size();
     {
-      const AString id = item.GetPropVal("id");
+      const AString id (DecodeXmlString(item.GetPropVal("id")));
       const char *end;
       file.Id = ConvertStringToUInt64(id, &end);
       if (*end == 0)
@@ -433,7 +450,7 @@ static bool AddItem(const CXmlItem &item, CObjectVector<CFile> &files, int paren
       const CXmlItem *typeItem = item.FindSubTag_GetPtr("type");
       if (typeItem)
       {
-        file.Type = typeItem->GetSubString();
+        file.Type = DecodeXmlString(typeItem->GetSubString(), true);
         // file.LinkFrom = typeItem->GetPropVal("link");
         if (file.Type.IsEqualTo("directory"))
           file.IsDir = true;
@@ -478,7 +495,7 @@ static bool AddItem(const CXmlItem &item, CObjectVector<CFile> &files, int paren
       const CXmlItem *encodingItem = dataItem->FindSubTag_GetPtr("encoding");
       if (encodingItem)
       {
-        AString s (encodingItem->GetPropVal("style"));
+        AString s (DecodeXmlString(encodingItem->GetPropVal("style")));
         if (!s.IsEmpty())
         {
           const AString appl ("application/");
@@ -506,7 +523,7 @@ static bool AddItem(const CXmlItem &item, CObjectVector<CFile> &files, int paren
     file.CTime = ParseTime(item, "ctime");
     file.ATime = ParseTime(item, "atime");
     {
-      const AString s (item.GetSubStringForTag("mode"));
+      const AString s (DecodeXmlString(item.GetSubStringForTag("mode"), true));
       if (s[0] == '0')
       {
         const char *end;
@@ -514,8 +531,8 @@ static bool AddItem(const CXmlItem &item, CObjectVector<CFile> &files, int paren
         file.Mode_Defined = (*end == 0);
       }
     }
-    file.User = item.GetSubStringForTag("user");
-    file.Group = item.GetSubStringForTag("group");
+    file.User = DecodeXmlString(item.GetSubStringForTag("user"));
+    file.Group = DecodeXmlString(item.GetSubStringForTag("group"));
 
     files.Add(file);
   }
@@ -649,7 +666,7 @@ HRESULT CHandler::Open2(IInStream *stream)
     return S_FALSE;
 
   // CreationTime = ParseTime(toc, "creation-time", false); // z_IsRequied
-  CreationTime_String = toc.GetSubStringForTag("creation-time");
+  CreationTime_String = DecodeXmlString(toc.GetSubStringForTag("creation-time"), true);
   {
     // we suppose that offset of checksum is always 0;
     // but [TOC].xml contains exact offset value in <checksum> block.
@@ -1080,6 +1097,81 @@ Z7_COM7F_IMF(CHandler::GetRawProp(UInt32 index, PROPID propID, const void **data
 
 
 
+Z7_CLASS_IMP_NOQIB_1(
+  CInStreamWithReadResult
+  , ISequentialInStream
+)
+public:
+  CMyComPtr<ISequentialInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithReadResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithReadResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (size == 0)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return S_OK;
+  }
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -1109,6 +1201,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
   lps->Init(extractCallback, false);
+  CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> decoderProgress;
+  decoderProgress->Progress = lps;
+  CMyComPtr2_Create<ISequentialInStream, CInStreamWithReadResult> inputCallbackStream;
+  inputCallbackStream->Stream = _inStream;
   CInStreamWithHash inHashStream;
   CMyComPtr2_Create<ISequentialOutStream, COutStreamWithSha1> outStreamSha1;
   CMyComPtr2_Create<ISequentialOutStream, COutStreamWithSha256> outStreamSha256;
@@ -1171,30 +1267,32 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         realOutStream.Release();
       else
       {
+        CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+        outCallbackStream->Stream = realOutStream;
         cur_PackSize = item.PackSize;
         cur_UnpSize = item.Size;
         
         RINOK(InStream_SeekSet(_inStream, _dataStartPos + item.Offset))
 
-        inHashStream.SetStreamAndInit(_inStream, item.archived_checksum.AlgoNumber);
+        inHashStream.SetStreamAndInit(inputCallbackStream, item.archived_checksum.AlgoNumber);
         inHashStream.inStreamLim->Init(item.PackSize);
 
         const int checksum_method = item.extracted_checksum.AlgoNumber;
         if (checksum_method == XAR_CKSUM_SHA1)
         {
           outStreamLim->SetStream(outStreamSha1);
-          outStreamSha1->SetStream(realOutStream);
+          outStreamSha1->SetStream(outCallbackStream);
           outStreamSha1->Init();
         }
         else if (checksum_method == XAR_CKSUM_SHA256
               || checksum_method == XAR_CKSUM_SHA512)
         {
           outStreamLim->SetStream(outStreamSha256);
-          outStreamSha256->SetStream(realOutStream);
+          outStreamSha256->SetStream(outCallbackStream);
           outStreamSha256->Init(checksum_method == XAR_CKSUM_SHA512);
         }
         else
-          outStreamLim->SetStream(realOutStream);
+          outStreamLim->SetStream(outCallbackStream);
 
         realOutStream.Release();
 
@@ -1219,8 +1317,11 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
           opRes = NExtract::NOperationResult::kUnsupportedMethod;
         
         if (coder)
-          res = coder->Code(inHashStream.inStreamLim, outStreamLim, NULL, &item.Size, lps);
+          res = coder->Code(inHashStream.inStreamLim, outStreamLim, NULL, &item.Size, decoderProgress);
         
+        RINOK(outCallbackStream->Result)
+        RINOK(decoderProgress->Result)
+        RINOK(inputCallbackStream->Result)
         if (res != S_OK)
         {
           if (!outStreamLim->IsFinishedOK())
@@ -1267,7 +1368,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         }
         if (checksum_method == XAR_CKSUM_SHA1)
           outStreamSha1->ReleaseStream();
-        else if (checksum_method == XAR_CKSUM_SHA256)
+        else if (checksum_method == XAR_CKSUM_SHA256
+              || checksum_method == XAR_CKSUM_SHA512)
           outStreamSha256->ReleaseStream();
       }
       outStreamLim->ReleaseStream();

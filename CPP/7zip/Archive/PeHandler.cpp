@@ -10,6 +10,7 @@
 #include "../../Common/ComTry.h"
 #include "../../Common/IntToString.h"
 #include "../../Common/StringConvert.h"
+#include "../../Common/UTFConvert.h"
 
 #include "../../Windows/PropVariantUtils.h"
 #include "../../Windows/TimeUtils.h"
@@ -22,8 +23,27 @@
 
 #include "../Compress/CopyCoder.h"
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE void Set32(Byte *p, UInt32 value)
+{
+  UInt32 data;
+  SetUi32(&data, value)
+  memcpy(p, &data, sizeof(data));
+}
+
 #define Get64(p) GetUi64(p)
 
 #define G16(offs, v) v = Get16(p + (offs))
@@ -40,32 +60,32 @@ namespace NPe {
 
 static const UInt32 k_Signature32 = 0x00004550;
 
-static HRESULT CalcCheckSum(ISequentialInStream *stream, UInt32 size, UInt32 excludePos, UInt32 &res)
+static HRESULT CalcCheckSum(ISequentialInStream *stream, UInt64 size, UInt32 excludePos, UInt32 &res)
 {
   const UInt32 kBufSizeMax = (UInt32)1 << 15;
   UInt32 bufSize = kBufSizeMax;
   CByteBuffer buffer(bufSize);
   Byte *buf = buffer;
   UInt32 sum = 0;
-  UInt32 pos = 0;
+  UInt64 pos = 0;
   for (;;)
   {
-    UInt32 rem = size - pos;
+    UInt64 rem = size - pos;
     if (rem > bufSize)
       rem = bufSize;
     if (rem == 0)
       break;
-    size_t processed = rem;
+    size_t processed = (size_t)rem;
     RINOK(ReadStream(stream, buf, &processed))
     
     for (unsigned j = 0; j < 4; j++)
     {
-      UInt32 e = excludePos + j;
+      UInt64 e = (UInt64)excludePos + j;
       if (pos <= e)
       {
         e -= pos;
         if (e < processed)
-          buf[e] = 0;
+          buf[(size_t)e] = 0;
       }
     }
 
@@ -97,7 +117,7 @@ static HRESULT CalcCheckSum(ISequentialInStream *stream, UInt32 size, UInt32 exc
     if (rem != processed)
       break;
   }
-  res = sum + pos;
+  res = sum + (UInt32)pos;
   return S_OK;
 }
 
@@ -409,9 +429,9 @@ struct CSection
     return ExtractSize;
   }
 
-  void UpdateTotalSize(UInt32 &totalSize) const
+  void UpdateTotalSize(UInt64 &totalSize) const
   {
-    const UInt32 t = Pa + PSize;
+    const UInt64 t = (UInt64)Pa + PSize;
     if (totalSize < t)
         totalSize = t;
   }
@@ -432,6 +452,75 @@ static const unsigned kNameSize = 8;
 static void GetName(const Byte *name, AString &res)
 {
   res.SetFrom_CalcLen((const char *)name, kNameSize);
+}
+
+static bool GetCoffNameOffset(const Byte *p, UInt32 &offset)
+{
+  if (p[0] != '/' || p[1] < '0' || p[1] > '9')
+    return false;
+  UInt32 value = 0;
+  for (unsigned i = 1; i < kNameSize && p[i] != 0; i++)
+  {
+    const unsigned digit = (unsigned)p[i] - '0';
+    if (digit > 9)
+      return false;
+    value = value * 10 + digit;
+  }
+  offset = value;
+  return true;
+}
+
+static HRESULT ReadCoffStrings(IInStream *stream, UInt64 pos, CByteBuffer &strings, UInt32 &tableSize)
+{
+  tableSize = 0;
+  RINOK(InStream_SeekSet(stream, pos))
+  Byte buf[4];
+  HRESULT res = ReadStream_FALSE(stream, buf, sizeof(buf));
+  if (res == S_FALSE)
+    return S_OK;
+  RINOK(res)
+  const UInt32 size = Get32(buf);
+  if (size == 4)
+  {
+    tableSize = size;
+    return S_OK;
+  }
+  if (size < 4 || size >= ((UInt32)1 << 28))
+    return S_OK;
+  strings.Alloc(size - 4);
+  res = ReadStream_FALSE(stream, strings, size - 4);
+  if (res == S_FALSE)
+  {
+    strings.Free();
+    return S_OK;
+  }
+  if (res == S_OK)
+    tableSize = size;
+  return res;
+}
+
+static HRESULT ReadCoffStringsSize(IInStream *stream, UInt64 pos, UInt32 &tableSize)
+{
+  tableSize = 0;
+  RINOK(InStream_SeekSet(stream, pos))
+  Byte buf[4];
+  HRESULT res = ReadStream_FALSE(stream, buf, sizeof(buf));
+  if (res == S_FALSE)
+    return S_OK;
+  RINOK(res)
+  const UInt32 size = Get32(buf);
+  if (size < 4 || size >= ((UInt32)1 << 28))
+    return S_OK;
+  if (size != 4)
+  {
+    RINOK(InStream_SeekSet(stream, pos + size - 1))
+    res = ReadStream_FALSE(stream, buf, 1);
+    if (res == S_FALSE)
+      return S_OK;
+    RINOK(res)
+  }
+  tableSize = size;
+  return S_OK;
 }
 
 void CSection::Parse(const Byte *p)
@@ -821,8 +910,8 @@ Z7_CLASS_IMP_CHandler_IInArchive_2(
 
   bool _coffMode;
   bool _allowTail;
-  
-  UInt32 _totalSize;
+
+  UInt64 _totalSize;
   Int32 _mainSubfile;
 
   CRecordVector<CMixItem> _mixItems;
@@ -959,7 +1048,12 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   NCOM::CPropVariant prop;
   switch (propID)
   {
-    case kpidPhySize: prop = _totalSize; break;
+    case kpidPhySize:
+      if (_totalSize <= (UInt32)-1)
+        prop = (UInt32)_totalSize;
+      else
+        prop = _totalSize;
+      break;
     case kpidComment:
     {
       UString s (_versionFullString);
@@ -1229,7 +1323,11 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
         AString s = item.Name;
         s.Replace('/', '_');
         s.Replace('\\', '_');
-        prop = MultiByteToUnicodeString(s);
+        UString name;
+        if (_coffMode && CheckUTF8_AString(s) && ConvertUTF8ToUnicode(s, name))
+          prop = name;
+        else
+          prop = MultiByteToUnicodeString(s);
         break;
       }
       case kpidSize: prop = (UInt64)item.GetSize_Extract(); break;
@@ -1291,9 +1389,10 @@ HRESULT CHandler::LoadDebugSections(IInStream *stream, bool &thereIsSection)
   for (i = 0; i < _sections.Size(); i++)
   {
     const CSection &sect = _sections[i];
-    if (sect.Va <= debugLink.Va && debugLink.Va + debugLink.Size <= sect.Va + sect.PSize)
+    if (sect.Va <= debugLink.Va &&
+        (UInt64)debugLink.Va + debugLink.Size <= (UInt64)sect.Va + sect.PSize)
     {
-      pa = sect.Pa + (debugLink.Va - sect.Va);
+      pa = (UInt64)sect.Pa + (debugLink.Va - sect.Va);
       break;
     }
   }
@@ -1310,7 +1409,8 @@ HRESULT CHandler::LoadDebugSections(IInStream *stream, bool &thereIsSection)
   RINOK(InStream_SeekSet(stream, pa))
   RINOK(ReadStream_FALSE(stream, buf, debugLink.Size))
 
-  for (i = 0; i < numItems; i++)
+  const UInt64 sectionsSize = _totalSize;
+  for (i = 0; i < numItems; i++, buf += kEntrySize)
   {
     CDebugEntry de;
     de.Parse(buf);
@@ -1331,10 +1431,12 @@ HRESULT CHandler::LoadDebugSections(IInStream *stream, bool &thereIsSection)
       sect.Set_Size_for_all(de.Size);
       */
     }
-    UInt32 totalSize = de.Pa + de.Size;
-    if (totalSize > _totalSize)
+    
+    UInt64 totalSize = (UInt64)de.Pa + de.Size;
+    if (totalSize > sectionsSize)
     {
-      _totalSize = totalSize;
+      if (totalSize > _totalSize)
+        _totalSize = totalSize;
       thereIsSection = true;
 
       CSection &sect = _sections.AddNew();
@@ -1346,7 +1448,6 @@ HRESULT CHandler::LoadDebugSections(IInStream *stream, bool &thereIsSection)
       sect.Pa = de.Pa;
       sect.Set_Size_for_all(de.Size);
     }
-    buf += kEntrySize;
   }
 
   return S_OK;
@@ -1425,7 +1526,11 @@ static UInt32 SetBitmapHeader(Byte *dest, const Byte *src, UInt32 size)
   if (!h.Parse(src, size))
     return 0;
   if (h.YSize < 0)
+  {
+    if (h.YSize < -(1 << 26))
+      return 0;
     h.YSize = -h.YSize;
+  }
   if (h.XSize > (1 << 26)
       || h.YSize > (1 << 26)
       || h.YSize < 0
@@ -1441,9 +1546,9 @@ static UInt32 SetBitmapHeader(Byte *dest, const Byte *src, UInt32 size)
   UInt32 offBits = totalSize - h.SizeImage;
   // BITMAPFILEHEADER
   SetUi16(dest, 0x4D42)
-  SetUi32(dest + 2, totalSize)
-  SetUi32(dest + 6, 0)
-  SetUi32(dest + 10, offBits)
+  Set32(dest + 2, totalSize);
+  Set32(dest + 6, 0);
+  Set32(dest + 10, offBits);
   return kBmpHeaderSize;
 }
 
@@ -1453,7 +1558,11 @@ static UInt32 SetIconHeader(Byte *dest, const Byte *src, UInt32 size)
   if (!h.Parse(src, size))
     return 0;
   if (h.YSize < 0)
+  {
+    if (h.YSize < -(1 << 26))
+      return 0;
     h.YSize = -h.YSize;
+  }
   if (h.XSize > (1 << 26)
       || h.YSize > (1 << 26)
       || h.YSize < 0
@@ -1499,12 +1608,12 @@ static UInt32 SetIconHeader(Byte *dest, const Byte *src, UInt32 size)
   dest[8] = (Byte)numColors; // ColorCount
   dest[9] = 0; // Reserved
   
-  SetUi32(dest + 10, 0) // Reserved1 / Reserved2
+  Set32(dest + 10, 0); // Reserved1 / Reserved2
 
   UInt32 numQuadsBytes = numColors * 4;
   UInt32 BytesInRes = kBitmapInfoHeader_Size + numQuadsBytes + imageSize;
-  SetUi32(dest + 14, BytesInRes)
-  SetUi32(dest + 18, kIconHeaderSize)
+  Set32(dest + 14, BytesInRes);
+  Set32(dest + 18, kIconHeaderSize);
 
   /*
   Description = DWORDToString(xSize) +
@@ -2383,7 +2492,8 @@ HRESULT CHandler::OpenResources(unsigned sectionIndex, IInStream *stream, IArchi
 bool CHeader::ParseCoff(const Byte *p)
 {
   ParseBase(p);
-  if (PointerToSymbolTable < kCoffHeaderSize)
+  if (PointerToSymbolTable < kCoffHeaderSize
+      && (PointerToSymbolTable != 0 || NumSymbols != 0))
     return false;
   if (NumSymbols >= (1 << 24))
     return false;
@@ -2474,10 +2584,25 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
 
   RINOK(ReadStream_FALSE(stream, buffer, bufSize))
   
-  // memset((void *)&_optHeader, 0, sizeof(_optHeader));
+  _optHeader = COptHeader();
   if (_header.OptHeaderSize != 0)
   if (!_optHeader.Parse(buffer, _header.OptHeaderSize))
     return S_FALSE;
+
+  CByteBuffer coffStrings;
+  UInt32 coffStringsSize = 0;
+  bool coffStringsChecked = false;
+  if (_coffMode && _header.PointerToSymbolTable >= optStart)
+    for (unsigned j = 0; j < _header.NumSections; j++)
+    {
+      UInt32 offset;
+      if (GetCoffNameOffset(buffer + _header.OptHeaderSize + j * kSectionSize, offset))
+      {
+        coffStringsChecked = true;
+        RINOK(ReadCoffStrings(stream, (UInt64)_header.PointerToSymbolTable + (UInt64)_header.NumSymbols * 18, coffStrings, coffStringsSize))
+        break;
+      }
+    }
 
   UInt32 pos = _header.OptHeaderSize;
   unsigned i;
@@ -2485,15 +2610,24 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
   {
     CSection &sect = _sections.AddNew();
     sect.Parse(buffer + pos);
+    UInt32 nameOffset;
+    if (_coffMode && GetCoffNameOffset(buffer + pos, nameOffset)
+        && nameOffset >= 4 && nameOffset - 4 < coffStrings.Size())
+    {
+      const Byte *name = (const Byte *)coffStrings + nameOffset - 4;
+      const Byte *end = (const Byte *)memchr(name, 0, coffStrings.Size() - (nameOffset - 4));
+      if (end && end != name)
+        sect.Name.SetFrom((const char *)name, (unsigned)(end - name));
+    }
     sect.IsRealSect = true;
-    if (sect.Name.IsEqualTo(".reloc"))
+    if (IsOpt() && sect.Name.IsEqualTo(".reloc"))
     {
       const CDirLink &dl = _optHeader.DirItems[kDirLink_BASERELOC];
       if (dl.Va == sect.Va &&
           dl.Size <= sect.PSize)
         sect.ExtractSize = dl.Size;
     }
-    else if (sect.Name.IsEqualTo(".pdata"))
+    else if (IsOpt() && sect.Name.IsEqualTo(".pdata"))
     {
       const CDirLink &dl = _optHeader.DirItems[kDirLink_EXCEPTION];
       if (dl.Va == sect.Va &&
@@ -2515,7 +2649,7 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
     {
       const CSection &prev = _sections[i - 1];
       if (prev.Pa < sect.Pa
-          && prev.Pa + prev.PSize > sect.Pa
+          && (UInt64)prev.Pa + prev.PSize > sect.Pa
           && sect.PSize != 0
           && prev.PSize != 0)
       {
@@ -2564,7 +2698,7 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
        But we suppose that it's part of EXE file */
 
     const UInt32 kAlign = 1 << 12;
-    UInt32 alignPos = _totalSize & (kAlign - 1);
+    UInt32 alignPos = (UInt32)_totalSize & (kAlign - 1);
     if (alignPos != 0)
     {
       UInt32 size = kAlign - alignPos;
@@ -2613,6 +2747,20 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
     sect.Pa = _header.PointerToSymbolTable;
     sect.Set_Size_for_all(size);
     sect.UpdateTotalSize(_totalSize);
+  }
+
+  if (_coffMode && _header.NumSymbols == 0 && _header.PointerToSymbolTable >= optStart)
+  {
+    if (!coffStringsChecked)
+    {
+      RINOK(ReadCoffStringsSize(stream, _header.PointerToSymbolTable, coffStringsSize))
+    }
+    if (coffStringsSize != 0)
+    {
+      const UInt64 end = (UInt64)_header.PointerToSymbolTable + coffStringsSize;
+      if (end > _totalSize)
+        _totalSize = end;
+    }
   }
 
   {
@@ -3339,8 +3487,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *inStream,
   Close();
   // try
   {
-    if (Open2(inStream) != S_OK)
-      return S_FALSE;
+    RINOK(Open2(inStream))
     _stream = inStream;
   }
   // catch(...) { return S_FALSE; }

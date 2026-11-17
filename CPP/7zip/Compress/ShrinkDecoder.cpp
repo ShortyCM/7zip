@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../C/Alloc.h"
 #include "../../../C/CpuArch.h"
 
@@ -13,7 +15,13 @@ namespace NCompress {
 namespace NShrink {
 
 #ifdef MY_CPU_LE_UNALIGN
-#define GetUi24or32(p)      (*(const UInt32 *)(const void *)(p))
+static Z7_FORCE_INLINE UInt32 Shrink_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return value;
+}
+#define GetUi24or32(p) Shrink_Load32(p)
 #else
 #define GetUi24or32(p) ( \
              ((const Byte *)(p))[0]        | \

@@ -285,6 +285,7 @@ HRESULT CThreadCrc::ProcessVirt()
       {
         error = GetNormalizedError();
         AddErrorMessage(error, path);
+        errorsFilesSize += fi.Size;
         continue;
       }
       if (isFirstFile)

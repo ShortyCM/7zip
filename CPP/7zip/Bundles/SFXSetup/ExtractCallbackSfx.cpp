@@ -81,15 +81,24 @@ Z7_COM7F_IMF(CExtractCallbackImp::SetCompleted(const UInt64 *completeValue))
   return S_OK;
 }
 
-void CExtractCallbackImp::CreateComplexDirectory(const UStringVector &dirPathParts)
+HRESULT CExtractCallbackImp::CreateComplexDirectory(const UStringVector &dirPathParts)
 {
   FString fullPath = _directoryPath;
   FOR_VECTOR (i, dirPathParts)
   {
     fullPath += us2fs(dirPathParts[i]);
-    CreateDir(fullPath);
+    if (!CreateDir(fullPath))
+    {
+      const DWORD error = ::GetLastError();
+      if (!NFind::DoesDirExist(fullPath))
+      {
+        ::SetLastError(error);
+        return GetLastError_noZero_HRESULT();
+      }
+    }
     fullPath.Add_PathSepar();
   }
+  return S_OK;
 }
 
 Z7_COM7F_IMF(CExtractCallbackImp::GetStream(UInt32 index,
@@ -129,8 +138,13 @@ Z7_COM7F_IMF(CExtractCallbackImp::GetStream(UInt32 index,
       _processedFileInfo.Attributes = prop.ulVal;
     }
 
+    prop.Clear();
     RINOK(_archiveHandler->GetProperty(index, kpidIsDir, &prop))
-    _processedFileInfo.IsDir = VARIANT_BOOLToBool(prop.boolVal);
+    _processedFileInfo.IsDir = false;
+    if (prop.vt == VT_BOOL)
+      _processedFileInfo.IsDir = VARIANT_BOOLToBool(prop.boolVal);
+    else if (prop.vt != VT_EMPTY)
+      return E_FAIL;
 
     bool isAnti = false;
     {
@@ -140,6 +154,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::GetStream(UInt32 index,
         isAnti = VARIANT_BOOLToBool(propTemp.boolVal);
     }
 
+    prop.Clear();
     RINOK(_archiveHandler->GetProperty(index, kpidMTime, &prop))
     switch (prop.vt)
     {
@@ -160,7 +175,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::GetStream(UInt32 index,
     if (!pathParts.IsEmpty())
     {
       if (!isAnti)
-        CreateComplexDirectory(pathParts);
+        RINOK(CreateComplexDirectory(pathParts))
     }
 
     FString fullProcessedPath = _directoryPath + us2fs(processedPath);

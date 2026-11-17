@@ -573,8 +573,8 @@ public:
   void LoadFullPathAndShow();
   void FoldersHistory();
   void OpenParentFolder();
-  void CloseOneLevel();
-  void CloseOpenFolders();
+  HRESULT CloseOneLevel(bool allowCancel = false);
+  HRESULT CloseOpenFolders(bool allowCancel = false);
   void OpenRootFolder();
 
   UString GetParentDirPrefix() const;
@@ -863,7 +863,8 @@ public:
   void OpenFolderExternal(unsigned index);
 
   void OpenFolder(unsigned index);
-  HRESULT OpenParentArchiveFolder();
+  int ConfirmCloseArchiveFolder(bool allowCancel);
+  HRESULT OpenParentArchiveFolder(bool updateModified);
   
   HRESULT OpenAsArc(IInStream *inStream,
       const CTempFileInfo &tempFileInfo,

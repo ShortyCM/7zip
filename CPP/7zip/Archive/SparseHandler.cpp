@@ -510,10 +510,11 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
   
   if (phyOffset == MY_CHUNK_TYPE_FILL)
   {
-    const Byte b0 = c.Fill [0];
-    const Byte b1 = c.Fill [1];
-    const Byte b2 = c.Fill [2];
-    const Byte b3 = c.Fill [3];
+    const unsigned phase = (unsigned)offset & (kFillSize - 1);
+    const Byte b0 = c.Fill [phase];
+    const Byte b1 = c.Fill [(phase + 1) & (kFillSize - 1)];
+    const Byte b2 = c.Fill [(phase + 2) & (kFillSize - 1)];
+    const Byte b3 = c.Fill [(phase + 3) & (kFillSize - 1)];
     if (b0 != b1 ||
         b0 != b2 ||
         b0 != b3)

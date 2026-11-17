@@ -28,6 +28,24 @@ protected:
   bool _overDict;
 
   HRESULT FlushPart() throw();
+
+  Z7_FORCE_INLINE
+  bool PrepareToWrite()
+  {
+    #ifdef Z7_NO_EXCEPTIONS
+    if (ErrorCode != S_OK)
+      return false;
+    #endif
+    if (_pos == _limitPos)
+    {
+      FlushWithCheck();
+      #ifdef Z7_NO_EXCEPTIONS
+      if (ErrorCode != S_OK)
+        return false;
+      #endif
+    }
+    return true;
+  }
 public:
   #ifdef Z7_NO_EXCEPTIONS
   HRESULT ErrorCode;
@@ -48,6 +66,8 @@ public:
   Z7_FORCE_INLINE
   void WriteByte(Byte b)
   {
+    if (!PrepareToWrite())
+      return;
     UInt32 pos = _pos;
     _buf[pos] = b;
     pos++;
@@ -60,6 +80,8 @@ public:
   {
     while (size)
     {
+      if (!PrepareToWrite())
+        return;
       UInt32 pos = _pos;
       size_t cur = (size_t)(_limitPos - pos);
       if (cur >= size)

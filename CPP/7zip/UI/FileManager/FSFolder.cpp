@@ -116,6 +116,10 @@ static const Byte kProps[] =
 
 HRESULT CFSFolder::Init(const FString &path /* , IFolderFolder *parentFolder */)
 {
+  #ifdef _WIN32
+  if (!_findChangeNotification.Close())
+    return GetLastError_noZero_HRESULT();
+  #endif
   // _parentFolder = parentFolder;
   _path = path;
 
@@ -162,8 +166,13 @@ HRESULT CFsFolderStat::Enumerate()
   CEnumerator enumerator;
   enumerator.SetDirPrefix(Path);
   CDirEntry fi;
-  while (enumerator.Next(fi))
+  for (;;)
   {
+    bool found;
+    if (!enumerator.Next(fi, found))
+      return GetLastError_noZero_HRESULT();
+    if (!found)
+      break;
     if (fi.IsDir())
     {
       NumFolders++;
@@ -228,8 +237,13 @@ HRESULT CFSFolder::LoadSubItems(int dirItem, const FString &relPrefix)
     fi.NumFiles = 0;
     fi.Parent = dirItem;
     
-    while (enumerator.Next(fi))
+    for (;;)
     {
+      bool found;
+      if (!enumerator.Next(fi, found))
+        return GetLastError_noZero_HRESULT();
+      if (!found)
+        break;
       if (fi.IsDir())
       {
         fi.Size = 0;
@@ -266,10 +280,12 @@ HRESULT CFSFolder::LoadSubItems(int dirItem, const FString &relPrefix)
       {
         fi.FileInfo_WasRequested = true;
         BY_HANDLE_FILE_INFORMATION info;
-        NIO::GetReparseData(_path + relPrefix + fi.Name, fi.Reparse, &info);
-        fi.NumLinks = info.nNumberOfLinks;
-        fi.FileIndex = (((UInt64)info.nFileIndexHigh) << 32) + info.nFileIndexLow;
-        fi.FileInfo_Defined = true;
+        NIO::GetReparseData(_path + relPrefix + fi.Name, fi.Reparse, &info, fi.FileInfo_Defined);
+        if (fi.FileInfo_Defined)
+        {
+          fi.NumLinks = info.nNumberOfLinks;
+          fi.FileIndex = (((UInt64)info.nFileIndexHigh) << 32) + info.nFileIndexLow;
+        }
       }
      #endif
 
@@ -315,50 +331,87 @@ HRESULT CFSFolder::LoadSubItems(int dirItem, const FString &relPrefix)
 
   const unsigned endIndex = Folders.Size();
   for (unsigned i = startIndex; i < endIndex; i++)
-    LoadSubItems((int)i, Folders[i]);
+  {
+    RINOK(LoadSubItems((int)i, Folders[i]))
+  }
   return S_OK;
 }
 
 Z7_COM7F_IMF(CFSFolder::LoadItems())
 {
+  COM_TRY_BEGIN
   Int32 dummy;
   WasChanged(&dummy);
   Clear();
-  RINOK(LoadSubItems(-1, FString()))
   _commentsAreLoaded = false;
+  RINOK(LoadSubItems(-1, FString()))
   return S_OK;
+  COM_TRY_END
 }
 
 static CFSTR const kDescriptionFileName = FTEXT("descript.ion");
 
-bool CFSFolder::LoadComments()
+HRESULT CFSFolder::LoadComments(AString *original)
 {
+  if (original)
+    original->Empty();
   _comments.Clear();
   _commentsAreLoaded = true;
   NIO::CInFile file;
   if (!file.Open(_path + kDescriptionFileName))
-    return false;
+  {
+    if (::GetLastError() == ERROR_FILE_NOT_FOUND)
+      return S_OK;
+    return GetLastError_noZero_HRESULT();
+  }
   UInt64 len;
   if (!file.GetLength(len))
-    return false;
+    return GetLastError_noZero_HRESULT();
   if (len >= (1 << 28))
-    return false;
-  AString s;
+    return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+  AString buffer;
+  AString &s = original ? *original : buffer;
   char *p = s.GetBuf((unsigned)(size_t)len);
   size_t processedSize;
   if (!file.ReadFull(p, (unsigned)(size_t)len, processedSize))
-    return false;
-  s.ReleaseBuf_CalcLen((unsigned)(size_t)len);
+    return GetLastError_noZero_HRESULT();
   if (processedSize != len)
-    return false;
-  file.Close();
+    return HRESULT_FROM_WIN32(ERROR_HANDLE_EOF);
+  s.ReleaseBuf_CalcLen((unsigned)(size_t)len);
+  if (s.Len() != len)
+    return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+  if (!file.Close())
+    return GetLastError_noZero_HRESULT();
+  CUtf8Check check;
+  check.Check_AString(s);
+  // Preserve the UTF-8 representation of raw Windows UTF-16 names.
+  check.SingleSurrogate = false;
+  if (!check.IsOK())
+    return HRESULT_FROM_WIN32(ERROR_NO_UNICODE_TRANSLATION);
   UString unicodeString;
   if (!ConvertUTF8ToUnicode(s, unicodeString))
-    return false;
-  return _comments.ReadFromString(unicodeString);
+    return HRESULT_FROM_WIN32(ERROR_NO_UNICODE_TRANSLATION);
+  return _comments.ReadFromString(unicodeString) ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
 }
 
-bool CFSFolder::SaveComments()
+static void RestoreCommentFile(NIO::COutFile &file, const AString &original,
+    UInt32 restoreSize, bool restoreLength)
+{
+  if (!file.SeekToBegin())
+    return;
+  UInt32 restored = 0;
+  if (restoreSize != 0)
+    file.Write(original, restoreSize, restored);
+  // A failed write can still have transferred the entire requested prefix.
+  if (restored == restoreSize && restoreLength)
+  {
+    UInt64 length;
+    if (!file.GetLength(length) || length != original.Len())
+      file.SetLength(original.Len());
+  }
+}
+
+HRESULT CFSFolder::SaveComments(const AString &original)
 {
   AString utf;
   {
@@ -370,7 +423,7 @@ bool CFSFolder::SaveComments()
     utf.Insert(0, "\xEF\xBB\xBF" "\r\n");
 
   FString path = _path + kDescriptionFileName;
-  // We must set same attrib. COutFile::CreateAlways can fail, if file has another attrib.
+  // Retain the existing attributes when opening or creating the description file.
   DWORD attrib = FILE_ATTRIBUTE_NORMAL;
   {
     CFileInfo fi;
@@ -378,11 +431,45 @@ bool CFSFolder::SaveComments()
       attrib = fi.Attrib;
   }
   NIO::COutFile file;
-  if (!file.Create_ALWAYS_with_Attribs(path, attrib))
-    return false;
-  UInt32 processed;
-  file.Write(utf, utf.Len(), processed);
   _commentsAreLoaded = false;
+  if (!file.Open(path, FILE_SHARE_READ, OPEN_ALWAYS, attrib))
+    return GetLastError_noZero_HRESULT();
+  UInt32 written;
+  const bool writeResult = file.Write(utf, utf.Len(), written);
+  if (!writeResult || written != utf.Len())
+  {
+    const HRESULT error = writeResult ? E_FAIL : GetLastError_noZero_HRESULT();
+    if (written != 0)
+    {
+      UInt32 restoreSize = written;
+      if (restoreSize > original.Len())
+        restoreSize = original.Len();
+      RestoreCommentFile(file, original, restoreSize, written > original.Len());
+    }
+    return error;
+  }
+  if (!file.SetEndOfFile())
+  {
+    const HRESULT error = GetLastError_noZero_HRESULT();
+    RestoreCommentFile(file, original, original.Len(), true);
+    return error;
+  }
+  if (!file.Close())
+  {
+    const HRESULT error = GetLastError_noZero_HRESULT();
+    RestoreCommentFile(file, original, original.Len(), true);
+    return error;
+  }
+  return S_OK;
+}
+
+static bool GetComment(const CPairsStorage &comments, const UString &name, UString &text)
+{
+  if (!comments.GetValue(name, text))
+    return false;
+  const int pos = text.Find((wchar_t)4);
+  if (pos >= 0)
+    text.DeleteFrom((unsigned)pos);
   return true;
 }
 
@@ -513,6 +600,7 @@ void CFSFolder::ReadChangeTime(CDirItem &di)
 
 Z7_COM7F_IMF(CFSFolder::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   /*
   if (index >= Files.Size())
@@ -611,13 +699,8 @@ Z7_COM7F_IMF(CFSFolder::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *va
       if (!_commentsAreLoaded)
         LoadComments();
       UString comment;
-      if (_comments.GetValue(fs2us(GetRelPath(fi)), comment))
-      {
-        int pos = comment.Find((wchar_t)4);
-        if (pos >= 0)
-          comment.DeleteFrom((unsigned)pos);
+      if (GetComment(_comments, fs2us(GetRelPath(fi)), comment))
         prop = comment;
-      }
       break;
     }
     case kpidPrefix:
@@ -629,6 +712,34 @@ Z7_COM7F_IMF(CFSFolder::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *va
   }
   prop.Detach(value);
   return S_OK;
+  }
+  catch (...)
+  {
+    // An interrupted query must not publish partially initialized cached data.
+    CDirItem &fi = Files[index];
+    #ifndef UNDER_CE
+    if (propID == kpidPackSize)
+      fi.PackSize_Defined = false;
+    #endif
+    #ifdef FS_SHOW_LINKS_INFO
+    if (propID == kpidLinks || propID == kpidINode)
+    {
+      fi.FileInfo_WasRequested = false;
+      fi.FileInfo_Defined = false;
+    }
+    if (propID == kpidChangeTime)
+    {
+      fi.ChangeTime_WasRequested = false;
+      fi.ChangeTime_Defined = false;
+    }
+    #endif
+    if (propID == kpidComment)
+    {
+      _commentsAreLoaded = false;
+      _comments.Clear();
+    }
+    return E_OUTOFMEMORY;
+  }
 }
 
 
@@ -736,14 +847,10 @@ Z7_COM7F_IMF2(Int32, CFSFolder::CompareItems(UInt32 index1, UInt32 index2, PROPI
     }
     case kpidPackSize:
     {
-      #ifdef UNDER_CE
-      return MyCompare(fi1.Size, fi2.Size);
-      #else
-      // PackSize can be undefined here
-      return MyCompare(
-          /* ss1 ? ss1->PackSize : */ fi1.PackSize,
-          /* ss2 ? ss2->PackSize : */ fi2.PackSize);
-      #endif
+      NCOM::CPropVariant prop1, prop2;
+      GetProperty(index1, kpidPackSize, &prop1);
+      GetProperty(index2, kpidPackSize, &prop2);
+      return prop1.Compare(prop2);
     }
     
     #ifdef FS_SHOW_LINKS_INFO
@@ -771,10 +878,11 @@ Z7_COM7F_IMF2(Int32, CFSFolder::CompareItems(UInt32 index1, UInt32 index2, PROPI
 
     case kpidComment:
     {
-      // change it !
+      if (!_commentsAreLoaded)
+        LoadComments();
       UString comment1, comment2;
-      _comments.GetValue(fs2us(GetRelPath(fi1)), comment1);
-      _comments.GetValue(fs2us(GetRelPath(fi2)), comment2);
+      GetComment(_comments, fs2us(GetRelPath(fi1)), comment1);
+      GetComment(_comments, fs2us(GetRelPath(fi2)), comment2);
       return MyStringCompareNoCase(comment1, comment2);
     }
     case kpidPrefix:
@@ -790,8 +898,13 @@ Z7_COM7F_IMF2(Int32, CFSFolder::CompareItems(UInt32 index1, UInt32 index2, PROPI
           GetExtensionPtr(fi1.Name),
           GetExtensionPtr(fi2.Name));
   }
-  
-  return 0;
+
+  NCOM::CPropVariant prop1, prop2;
+  GetProperty(index1, propID, &prop1);
+  GetProperty(index2, propID, &prop2);
+  if (prop1.vt == VT_BSTR && prop2.vt == VT_BSTR)
+    return MyStringCompareNoCase(prop1.bstrVal, prop2.bstrVal);
+  return prop1.Compare(prop2);
 }
 
 HRESULT CFSFolder::BindToFolderSpec(CFSTR name, IFolderFolder **resultFolder)
@@ -851,20 +964,25 @@ FString CFSFolder::GetRelPath(const CDirItem &item) const
 
 Z7_COM7F_IMF(CFSFolder::BindToFolder(UInt32 index, IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   const CDirItem &fi = Files[index];
   if (!fi.IsDir())
     return E_INVALIDARG;
   return BindToFolderSpec(GetRelPath(fi), resultFolder);
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CFSFolder::BindToFolder(const wchar_t *name, IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   return BindToFolderSpec(us2fs(name), resultFolder);
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CFSFolder::BindToParentFolder(IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   /*
   if (_parentFolder)
@@ -925,6 +1043,7 @@ Z7_COM7F_IMF(CFSFolder::BindToParentFolder(IFolderFolder **resultFolder))
   #endif
 
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CFSFolder::GetNumberOfProperties(UInt32 *numProperties))
@@ -976,11 +1095,14 @@ Z7_COM7F_IMF(CFSFolder::WasChanged(Int32 *wasChanged))
  
 Z7_COM7F_IMF(CFSFolder::Clone(IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
+  *resultFolder = NULL;
   CFSFolder *fsFolderSpec = new CFSFolder;
   CMyComPtr<IFolderFolder> folderNew = fsFolderSpec;
-  fsFolderSpec->Init(_path);
+  RINOK(fsFolderSpec->Init(_path))
   *resultFolder = folderNew.Detach();
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -1057,6 +1179,8 @@ Z7_COM7F_IMF(CFSFolder::CreateFile(const wchar_t *name, IProgress * /* progress 
   NIO::COutFile outFile;
   if (!outFile.Create_NEW(absPath))
     return GetLastError_noZero_HRESULT();
+  if (!outFile.Close())
+    return GetLastError_noZero_HRESULT();
   return S_OK;
 }
 
@@ -1107,7 +1231,7 @@ Z7_COM7F_IMF(CFSFolder::Delete(const UInt32 *indices, UInt32 numItems,IProgress 
     }
     if (!result)
       return GetLastError_noZero_HRESULT();
-    const UInt64 completed = i;
+    const UInt64 completed = (UInt64)i + 1;
     RINOK(progress->SetCompleted(&completed))
   }
   return S_OK;
@@ -1125,25 +1249,40 @@ Z7_COM7F_IMF(CFSFolder::SetProperty(UInt32 index, PROPID propID,
   {
     case kpidComment:
     {
-      UString filename = fs2us(fi.Name);
-      filename.Trim();
+      if (value->vt != VT_EMPTY && value->vt != VT_BSTR)
+        return E_INVALIDARG;
+      UString comment;
+      if (value->vt == VT_BSTR)
+      {
+        const UINT len = ::SysStringLen(value->bstrVal);
+        for (UINT i = 0; i < len; ++i)
+        {
+          const wchar_t c = value->bstrVal[i];
+          if (c == 0 || c == 4)
+            return E_INVALIDARG;
+        }
+        comment.SetFromBstr(value->bstrVal);
+        comment.RemoveChar(L'\r');
+        comment.Trim();
+        if (comment.Find(L'\n') >= 0)
+          return E_INVALIDARG;
+      }
+      AString original;
+      RINOK(LoadComments(&original))
+      const UString filename = fs2us(fi.Name);
       if (value->vt == VT_EMPTY)
         _comments.DeletePair(filename);
-      else if (value->vt == VT_BSTR)
+      else
       {
         CTextPair pair;
         pair.ID = filename;
-        pair.ID.Trim();
-        pair.Value.SetFromBstr(value->bstrVal);
-        pair.Value.Trim();
+        pair.Value = comment;
         if (pair.Value.IsEmpty())
           _comments.DeletePair(filename);
         else
           _comments.AddPair(pair);
       }
-      else
-        return E_INVALIDARG;
-      SaveComments();
+      RINOK(SaveComments(original))
       break;
     }
     default:

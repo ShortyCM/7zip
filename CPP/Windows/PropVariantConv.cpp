@@ -231,7 +231,7 @@ void ConvertPropVariantToShortString(const PROPVARIANT &prop, char *dest) throw(
       ConvertUtcFileTimeToString(prop.filetime, dest, level);
       return;
     }
-    // case VT_I1: return ConvertInt64ToString(prop.cVal, dest); return;
+    case VT_I1: ConvertInt64ToString((signed char)prop.cVal, dest); return;
     case VT_I2: ConvertInt64ToString(prop.iVal, dest); return;
     case VT_I4: ConvertInt64ToString(prop.lVal, dest); return;
     case VT_I8: ConvertInt64ToString(prop.hVal.QuadPart, dest); return;
@@ -264,7 +264,7 @@ void ConvertPropVariantToShortString(const PROPVARIANT &prop, wchar_t *dest) thr
       ConvertUtcFileTimeToString(prop.filetime, dest, level);
       return;
     }
-    // case VT_I1: return ConvertInt64ToString(prop.cVal, dest); return;
+    case VT_I1: ConvertInt64ToString((signed char)prop.cVal, dest); return;
     case VT_I2: ConvertInt64ToString(prop.iVal, dest); return;
     case VT_I4: ConvertInt64ToString(prop.lVal, dest); return;
     case VT_I8: ConvertInt64ToString(prop.hVal.QuadPart, dest); return;

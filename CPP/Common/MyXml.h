@@ -18,17 +18,19 @@ public:
   bool IsTag;
   CObjectVector<CXmlProp> Props;
   CObjectVector<CXmlItem> SubItems;
+
+  CXmlItem(): IsTag(false) {}
   
   const char * ParseItem(const char *s Z7_lifetimebound, int numAllowedLevels);
 
   bool IsTagged(const char *tag) const throw();
   int FindProp(const char *propName) const throw();
   AString GetPropVal(const char *propName) const;
-  AString GetSubString() const;
+  AString GetSubString(bool trimLeft = false) const;
   const AString * GetSubStringPtr() const throw();
   int FindSubTag(const char *tag) const throw();
   const CXmlItem *FindSubTag_GetPtr(const char *tag) const throw();
-  AString GetSubStringForTag(const char *tag) const;
+  AString GetSubStringForTag(const char *tag, bool trimLeft = false) const;
   void AppendTo(AString &s) const;
 };
 

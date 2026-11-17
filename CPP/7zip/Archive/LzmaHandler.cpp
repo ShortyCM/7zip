@@ -24,9 +24,23 @@ using namespace NWindows;
 namespace NArchive {
 namespace NLzma {
 
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
+
 static bool CheckDicSize(const Byte *p)
 {
-  UInt32 dicSize = GetUi32(p);
+  UInt32 dicSize = Get32(p);
   if (dicSize == 1)
     return true;
   for (unsigned i = 0; i <= 30; i++)
@@ -55,7 +69,7 @@ struct CHeader
   Byte LzmaProps[5];
 
   Byte GetProp() const { return LzmaProps[0]; }
-  UInt32 GetDicSize() const { return GetUi32(LzmaProps + 1); }
+  UInt32 GetDicSize() const { return Get32(LzmaProps + 1); }
   bool HasSize() const { return (Size != (UInt64)(Int64)-1); }
   bool Parse(const Byte *buf, bool isThereFilter);
 };
@@ -68,7 +82,7 @@ bool CHeader::Parse(const Byte *buf, bool isThereFilter)
   const Byte *sig = buf + (isThereFilter ? 1 : 0);
   for (int i = 0; i < 5; i++)
     LzmaProps[i] = sig[i];
-  Size = GetUi64(sig + 5);
+  Size = Get64(sig + 5);
   return
     LzmaProps[0] < 5 * 5 * 9 &&
     FilterID < 2 &&
@@ -197,6 +211,7 @@ IMP_IInArchive_ArcProps
 
 Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -219,6 +234,7 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CHandler::GetNumberOfItems(UInt32 *numItems))
@@ -278,6 +294,7 @@ void CHandler::GetMethod(NCOM::CPropVariant &prop) const
 
 Z7_COM7F_IMF(CHandler::GetProperty(UInt32 /* index */, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -288,6 +305,7 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 /* index */, PROPID propID, PROPVARIAN
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 API_FUNC_static_IsArc IsArc_Lzma(const Byte *p, size_t size)
@@ -297,7 +315,7 @@ API_FUNC_static_IsArc IsArc_Lzma(const Byte *p, size_t size)
     return k_IsArc_Res_NEED_MORE;
   if (p[0] >= 5 * 5 * 9)
     return k_IsArc_Res_NO;
-  const UInt64 unpackSize = GetUi64(p + 1 + 4);
+  const UInt64 unpackSize = Get64(p + 1 + 4);
   if (unpackSize != (UInt64)(Int64)-1)
   {
     if (unpackSize >= ((UInt64)1 << 56))
@@ -437,6 +455,81 @@ Z7_COM7F_IMF(CCompressProgressInfoImp::SetRatioInfo(const UInt64 *inSize, const 
   return S_OK;
 }
 
+Z7_CLASS_IMP_NOQIB_1(
+  CInStreamWithReadResult
+  , ISequentialInStream
+)
+public:
+  CMyComPtr<ISequentialInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithReadResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithReadResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (size == 0)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return S_OK;
+  }
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -462,13 +555,17 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   
   RINOK(extractCallback->PrepareOperation(askMode))
 
+  CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+  outCallbackStream->Stream = realOutStream;
   CMyComPtr2_Create<ISequentialOutStream, CDummyOutStream> outStream;
-  outStream->SetStream(realOutStream);
+  outStream->SetStream(outCallbackStream);
   outStream->Init();
   realOutStream.Release();
 
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
   lps->Init(extractCallback, true);
+  CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> decoderProgress;
+  decoderProgress->Progress = lps;
 
   if (_needSeekToStart)
   {
@@ -479,8 +576,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   else
     _needSeekToStart = true;
 
+  CMyComPtr2_Create<ISequentialInStream, CInStreamWithReadResult> inputCallbackStream;
+  inputCallbackStream->Stream = _seqStream;
   CDecoder decoder;
-  RINOK(decoder.Create(_lzma86, _seqStream))
+  RINOK(decoder.Create(_lzma86, inputCallbackStream))
  
   bool firstItem = true;
 
@@ -520,7 +619,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     numStreams++;
     firstItem = false;
 
-    hres = decoder.Code(st, outStream, lps);
+    hres = decoder.Code(st, outStream, decoderProgress);
+    RINOK(outCallbackStream->Result)
+    RINOK(decoderProgress->Result)
+    RINOK(inputCallbackStream->Result)
 
     packSize = decoder.GetInputProcessedSize();
     unpackSize = outStream->GetSize();

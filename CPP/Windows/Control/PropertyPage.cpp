@@ -33,7 +33,12 @@ APIENTRY MyProperyPageProcedure(HWND dialogHWND, UINT message, WPARAM wParam, LP
   if (message == WM_INITDIALOG)
     dialog->Attach(dialogHWND);
   try { return BoolToBOOL(dialog->OnMessage(message, wParam, lParam)); }
-  catch(...) { return TRUE; }
+  catch(...)
+  {
+    if (message == WM_NOTIFY && lParam && ((LPNMHDR)lParam)->code == PSN_APPLY)
+      dialog->SetMsgResult(PSNRET_INVALID_NOCHANGEPAGE);
+    return TRUE;
+  }
 }
 
 bool CPropertyPage::OnNotify(UINT /* controlID */, LPNMHDR lParam)

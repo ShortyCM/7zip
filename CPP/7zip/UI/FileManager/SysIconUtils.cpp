@@ -266,8 +266,11 @@ int CExtToIconMap::GetIconIndex(DWORD attrib, const wchar_t *fileName /*, UStrin
       sprintf(s, "i = %3d, attr = %7x", _attribMap.Size(), attrib);
       OutputDebugStringA(s);
       */
-      pair.Attrib = attrib;
-      _attribMap.Insert(insertPos, pair);
+      if (pair.IconIndex >= 0)
+      {
+        pair.Attrib = attrib;
+        _attribMap.Insert(insertPos, pair);
+      }
       // if (typeName) *typeName = pair.TypeName;
       return pair.IconIndex;
     }
@@ -304,14 +307,14 @@ int CExtToIconMap::GetIconIndex(DWORD attrib, const wchar_t *fileName /*, UStrin
     // Shell_GetFileInfo_SysIconIndex_for_Path is too slow for big number of split extensions: .001, .002, .003
     if (!SplitIconIndex_Defined)
     {
-      Shell_GetFileInfo_SysIconIndex_for_Path_attrib_iconIndexRef(
+      const DWORD_PTR res = Shell_GetFileInfo_SysIconIndex_for_Path_attrib_iconIndexRef(
           #ifdef UNDER_CE
           FTEXT("\\")
           #endif
           FTEXT("__FILE__.001"), FILE_ATTRIBUTE_ARCHIVE, SplitIconIndex);
-      SplitIconIndex_Defined = true;
+      SplitIconIndex_Defined = (res != 0 && SplitIconIndex >= 0);
     }
-    return SplitIconIndex;
+    return SplitIconIndex_Defined ? SplitIconIndex : -1;
   }
 
   CExtIconPair pair;
@@ -321,7 +324,7 @@ int CExtToIconMap::GetIconIndex(DWORD attrib, const wchar_t *fileName /*, UStrin
       attrib & FILE_ATTRIBUTE_COMPRESSED ?
           FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_COMPRESSED:
           FILE_ATTRIBUTE_ARCHIVE);
-  if (map.Size() < (1u << 16)  // we limit cache size
+  if (pair.IconIndex >= 0 && map.Size() < (1u << 16)  // we limit cache size
       // || DoItemAlwaysStart(fileName + dotPos) // we want some popular extensions in cache
       )
     map.Insert(insertPos, pair);

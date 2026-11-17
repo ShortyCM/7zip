@@ -423,11 +423,13 @@ HRESULT CExtractCallbackImp::BeforeOpen(const wchar_t *name, bool /* testMode */
   return S_OK;
 }
 
-HRESULT CExtractCallbackImp::SetCurrentFilePath2(const wchar_t *path)
+HRESULT CExtractCallbackImp::SetCurrentFilePath2(const wchar_t *path, bool isDir)
 {
   _currentFilePath = path;
   #ifndef Z7_SFX
-  ProgressDialog->Sync.Set_FilePath(path);
+  ProgressDialog->Sync.Set_FilePath(path, isDir);
+  #else
+  UNUSED_VAR(isDir)
   #endif
   return S_OK;
 }
@@ -724,6 +726,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::AskWrite(
   FString destPathSys = us2fs(destPath);
   const bool srcIsFolderSpec = IntToBool(srcIsFolder);
   CFileInfo destFileInfo;
+  bool deleteDestPath = false;
   
   if (destFileInfo.Find(destPathSys))
   {
@@ -793,16 +796,41 @@ Z7_COM7F_IMF(CExtractCallbackImp::AskWrite(
     else
     {
       if (NFind::DoesFileExist_Raw(destPathSys))
-      if (!NDir::DeleteFileAlways(destPathSys))
-      if (GetLastError() != ERROR_FILE_NOT_FOUND)
       {
-        RINOK(MessageError("Cannot delete output file", destPathSys))
-        return E_ABORT;
+        if (Src_Is_IO_FS_Folder && srcPath && srcPath[0] != 0)
+        {
+          const FString srcPathSys = us2fs(srcPath);
+          CFileInfo srcFileInfo;
+          if (!srcFileInfo.Find(srcPathSys))
+          {
+            const DWORD error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            {
+              RINOK(MessageError("Cannot find input file", srcPathSys))
+              return E_ABORT;
+            }
+          }
+          else if (srcFileInfo.IsDir())
+          {
+            RINOK(MessageError("Input file is now a folder", srcPathSys))
+            return E_ABORT;
+          }
+        }
+        deleteDestPath = true;
       }
     }
   }
+  RINOK(StringToBstr(destPathResultTemp, destPathResult))
+  if (deleteDestPath && !NDir::DeleteFileAlways(destPathSys)
+      && GetLastError() != ERROR_FILE_NOT_FOUND)
+  {
+    ::SysFreeString(*destPathResult);
+    *destPathResult = NULL;
+    RINOK(MessageError("Cannot delete output file", destPathSys))
+    return E_ABORT;
+  }
   *writeAnswer = BoolToInt(true);
-  return StringToBstr(destPathResultTemp, destPathResult);
+  return S_OK;
 }
 
 
@@ -873,7 +901,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::GetStream7(const wchar_t * const name,
     _curSize_Defined = true;
   }
 
-  GetItemBoolProp(getProp, kpidIsAltStream, _isAltStream);
+  RINOK(GetItemBoolProp(getProp, kpidIsAltStream, _isAltStream))
   if (!ProcessAltStreams && _isAltStream)
     return S_OK;
 
@@ -989,7 +1017,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::PrepareOperation7(Int32 askExtractMode))
       break;
   };
   */
-  return SetCurrentFilePath2(_filePath);
+  return SetCurrentFilePath2(_filePath, _isFolder);
   COM_TRY_END
 }
 
@@ -1084,8 +1112,6 @@ Z7_COM7F_IMF(CExtractCallbackImp::RequestMemoryUse(
         *answerFlags = NRequestMemoryAnswerFlags::k_Stop;
         return E_ABORT;
       }
-      if (dialog.NeedSave)
-        NExtract::Save_LimitGB(dialog.Limit_GB);
       if (dialog.Remember)
       {
         _remember = true;
@@ -1255,7 +1281,13 @@ HRESULT CVirtFileSystem::FlushToDisk(bool closeLast)
           file.CTime_Defined ? &file.CTime : NULL,
           file.ATime_Defined ? &file.ATime : NULL,
           file.MTime_Defined ? &file.MTime : NULL);
-      _outFileStream->Close();
+      const HRESULT closeRes = _outFileStream->Close();
+      if (closeRes != S_OK)
+      {
+        if (_altStream_NeedRestore_Attrib_bool)
+          NDir::SetFileAttrib(basePath, _altStream_NeedRestore_AttribVal);
+        return closeRes;
+      }
     }
     
     _numFlushed++;

@@ -5,6 +5,8 @@
 #include "../../../../C/7zCrc.h"
 #include "../../../../C/Alloc.h"
 
+#include "../../../Common/ComTry.h"
+
 #include "../../../Windows/PropVariant.h"
 
 #include "../../ICoder.h"
@@ -46,6 +48,7 @@ public:
 
 Z7_COM7F_IMF(CLzmaEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIANT *props, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   Encoder.Create_if_Empty();
   CMyComPtr2_Create<ISequentialOutStream, CBufPtrSeqOutStream> outStream;
   outStream->Init(Header + 4, kLzmaPropsSize);
@@ -58,6 +61,7 @@ Z7_COM7F_IMF(CLzmaEncoder::SetCoderProperties(const PROPID *propIDs, const PROPV
   Header[2] = kLzmaPropsSize;
   Header[3] = 0;
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CLzmaEncoder::SetCoderPropertiesOpt(const PROPID *propIDs, const PROPVARIANT *props, UInt32 numProps))

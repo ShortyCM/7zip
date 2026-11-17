@@ -97,10 +97,21 @@ static void ReadString(const char *s, unsigned size, AString &result)
   result.SetFrom_CalcLen(s, size);
 }
 
+static UInt32 ReadBe32(const char *p)
+{
+  const Byte *b = (const Byte *)p;
+  return ((UInt32)b[0] << 24) | ((UInt32)b[1] << 16) | ((UInt32)b[2] << 8) | b[3];
+}
+
+static UInt64 ReadBe64(const char *p)
+{
+  return ((UInt64)ReadBe32(p) << 32) | ReadBe32(p + 4);
+}
+
 static bool ParseInt64(const char *p, Int64 &val, bool &isBin)
 {
-  const UInt32 h = GetBe32(p);
-  val = (Int64)GetBe64(p + 4);
+  const UInt32 h = ReadBe32(p);
+  val = (Int64)ReadBe64(p + 4);
   isBin = true;
   if (h == (UInt32)1 << 31)
     return ((val >> 63) & 1) == 0;
@@ -130,11 +141,11 @@ static bool ParseInt64_MTime(const char *p, Int64 &val, bool &isBin)
 
 static bool ParseSize(const char *p, UInt64 &val, bool &isBin)
 {
-  if (GetBe32(p) == (UInt32)1 << 31)
+  if (ReadBe32(p) == (UInt32)1 << 31)
   {
     // GNU extension
     isBin = true;
-    val = GetBe64(p + 4);
+    val = ReadBe64(p + 4);
     return ((val >> 63) & 1) == 0;
   }
   isBin = false;
@@ -356,7 +367,7 @@ HRESULT CArchive::GetNextItemReal(CItemEx &item)
         return S_OK;
       do
       {
-        if (GetBe32(p) == 0)
+        if (ReadBe32(p) == 0)
         {
           if (isExtended)
             return S_OK;

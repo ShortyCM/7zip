@@ -17,6 +17,13 @@
 namespace NArchive {
 namespace NMslz {
 
+static Z7_FORCE_INLINE UInt32 Get32_Unaligned(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
 // windows LZ expand functions have limit of (1u << 31) for maximum supported size
 static const UInt32 kUnpackSizeMax = 1u << 31;
 
@@ -202,7 +209,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 * /* maxCheckStartPo
     RINOK(ReadStream_FALSE(stream, buffer, kHeaderSize))
     if (memcmp(buffer, kSignature, kSignatureSize))
       return S_FALSE;
-    _unpackSize = GetUi32(buffer + 10);
+    _unpackSize = Get32_Unaligned(buffer + 10);
     if (_unpackSize > kUnpackSizeMax)
       return S_FALSE;
     RINOK(InStream_GetSize_SeekToEnd(stream, _originalFileSize))
@@ -260,6 +267,8 @@ struct CMslzDecoder
   bool _needMoreData;
   UInt32 _unpackSize;
   UInt64 _inProcessed;
+  HRESULT InputResult;
+  HRESULT CallbackResult;
   ISequentialInStream *inStream;
   ISequentialOutStream *outStream;
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
@@ -270,7 +279,9 @@ struct CMslzDecoder
       _isArc(false),
       _needMoreData(false),
       _unpackSize(0),
-      _inProcessed(0)
+      _inProcessed(0),
+      InputResult(S_OK),
+      CallbackResult(S_OK)
       {}
 };
 
@@ -305,24 +316,24 @@ HRESULT CMslzDecoder::Decode(IArchiveExtractCallback * const extractCallback)
   buffer.Alloc_after_Constructor(k_InBuf_Size + k_OutBuf_Size);
   if (!buffer.IsAllocated())
     return E_OUTOFMEMORY;
-  
+
   Byte * const inBuf = buffer; // + k_OutBuf_Size;
   Byte *src_end;
   {
     size_t num = k_InBuf_Size;
-    RINOK(ReadStream(inStream, inBuf, &num))
+    RINOK(InputResult = ReadStream(inStream, inBuf, &num))
     if (num < kHeaderSize)
       return S_FALSE;
     src_end = inBuf + num;
   }
   if (memcmp(inBuf, kSignature, kSignatureSize))
     return S_FALSE;
-  UInt32 unpackSize = GetUi32(inBuf + 10);
+  UInt32 unpackSize = Get32_Unaligned(inBuf + 10);
   if (unpackSize > kUnpackSizeMax)
     return S_FALSE;
   _isArc = true;
   _unpackSize = unpackSize;
-  RINOK(extractCallback->SetTotal(unpackSize))
+  RINOK(CallbackResult = extractCallback->SetTotal(unpackSize))
   const unsigned kOffset = 16; // 16 for MS code, 18 in Okumura's code.
   Byte * const outBuf = buffer + k_InBuf_Size;
   memset(outBuf, ' ', k_WinSize);
@@ -357,11 +368,11 @@ HRESULT CMslzDecoder::Decode(IArchiveExtractCallback * const extractCallback)
         if ((unpackPos2 & ((1u << 24) - k_ChunkSize)) == 0)
         {
           const UInt64 outSize = unpackPos2;
-          RINOK(lps.Interface()->SetRatioInfo(&_inProcessed, &outSize))
+          RINOK(CallbackResult = lps.Interface()->SetRatioInfo(&_inProcessed, &outSize))
         }
         if (outStream)
         {
-          RINOK(WriteStream(outStream, outBuf + k_WinSize, k_ChunkSize))
+          RINOK(CallbackResult = WriteStream(outStream, outBuf + k_WinSize, k_ChunkSize))
           memmove(outBuf, outBuf + k_ChunkSize, (size_t)(outPtr - outBuf));
         }
       }
@@ -373,7 +384,7 @@ HRESULT CMslzDecoder::Decode(IArchiveExtractCallback * const extractCallback)
         // memcpy(inBuf + k_InAlign_Size - 16, inBuf + k_InBuf_Size - 16, 16);
         memcpy(inBuf + k_InAlign_Size - rem, src, rem);
         size_t num = k_InBuf_Size - k_InAlign_Size;
-        res = ReadStream(inStream, inBuf + k_InAlign_Size, &num);
+        res = InputResult = ReadStream(inStream, inBuf + k_InAlign_Size, &num);
         src_end = inBuf + k_InAlign_Size + num;
         src -= k_InBuf_Size - k_InAlign_Size;
         if (res != S_OK)
@@ -433,12 +444,12 @@ HRESULT CMslzDecoder::Decode(IArchiveExtractCallback * const extractCallback)
 
 data_error:
   res = S_FALSE;
-  
+
 end:
   _inProcessed += (size_t)(src - inBuf);
   if (outStream)
   {
-    const HRESULT res2 = WriteStream(outStream, outBuf + k_WinSize,
+    const HRESULT res2 = CallbackResult = WriteStream(outStream, outBuf + k_WinSize,
         (size_t)(outPtr - outBuf - k_WinSize));
     if (res == S_OK)
       res = res2;
@@ -446,7 +457,7 @@ end:
   if (res == S_OK)
   {
     const UInt64 outSize = unpackPos - kStartOffset;
-    res = lps.Interface()->SetRatioInfo(&_inProcessed, &outSize);
+    res = CallbackResult = lps.Interface()->SetRatioInfo(&_inProcessed, &outSize);
   }
   return res;
 }
@@ -480,9 +491,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 * const indices, const UInt32 numIte
     RINOK(extractCallback->GetStream(0, &realOutStream, askMode))
     if (!testMode && !realOutStream)
       return S_OK;
-      
+
     RINOK(extractCallback->PrepareOperation(askMode))
-        
+
     if (_needSeekToStart)
     {
       if (!_inStream)
@@ -497,6 +508,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 * const indices, const UInt32 numIte
       decoder.outStream = realOutStream;
       decoder.lps->Init(extractCallback, false);
       const HRESULT hres = decoder.Decode(extractCallback);
+      RINOK(decoder.CallbackResult)
+      RINOK(decoder.InputResult)
       if (hres == S_OK)
       {
         opRes = NExtract::NOperationResult::kOK;
@@ -523,7 +536,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 * const indices, const UInt32 numIte
         opRes = NExtract::NOperationResult::kDataError;
       }
     }
-    
+
     _needMoreInput = decoder._needMoreData;
     if (_needMoreInput)
       opRes = NExtract::NOperationResult::kUnexpectedEnd;

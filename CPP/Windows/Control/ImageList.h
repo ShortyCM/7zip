@@ -37,6 +37,11 @@ public:
       initialNumber, grow);
     if (a == NULL)
       return false;
+    if (m_Object != NULL && !ImageList_Destroy(m_Object))
+    {
+      ImageList_Destroy(a);
+      return false;
+    }
     return Attach(a);
   }
   

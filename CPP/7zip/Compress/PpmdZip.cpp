@@ -50,6 +50,7 @@ Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream 
     Byte buf[2];
     for (int i = 0; i < 2; i++)
       buf[i] = _inStream.ReadByte();
+    RINOK(_inStream.Res)
     if (_inStream.Extra)
       return S_FALSE;
     
@@ -68,7 +69,9 @@ Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream 
     if (!Ppmd8_Alloc(&_ppmd, mem << 20, &g_BigAlloc))
       return E_OUTOFMEMORY;
     
-    if (!Ppmd8_Init_RangeDec(&_ppmd))
+    const BoolInt initRes = Ppmd8_Init_RangeDec(&_ppmd);
+    RINOK(_inStream.Res)
+    if (!initRes)
       return S_FALSE;
     Ppmd8_Init(&_ppmd, order, restor);
   }

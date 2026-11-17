@@ -68,6 +68,11 @@ using namespace NWindows;
 namespace NArchive {
 namespace Ntfs {
 
+static Z7_FORCE_INLINE UInt16 Get16_Unaligned(const Byte *p)
+{
+  return (UInt16)((UInt16)p[0] | ((UInt16)p[1] << 8));
+}
+
 static const wchar_t * const kVirtualFolder_System = L"[SYSTEM]";
 static const wchar_t * const kVirtualFolder_Lost_Normal = L"[LOST]";
 static const wchar_t * const kVirtualFolder_Lost_Deleted = L"[UNKNOWN]";
@@ -124,7 +129,7 @@ bool CHeader::Parse(const Byte * const p)
         return false;
   }
   {
-    const unsigned t = GetLog(GetUi16(p + 11)); // unaligned
+    const unsigned t = GetLog(Get16_Unaligned(p + 11));
     if (t < 9 || t > 12)
       return false;
     SectorSizeLog = (unsigned)t;
@@ -383,7 +388,7 @@ struct CAttr
 
   // UInt32 Len;
   UString2 Name;
-  // UInt16 Flags;
+  UInt16 Flags;
   // UInt16 Instance;
   CByteBuffer Data;
 
@@ -401,6 +406,11 @@ struct CAttr
 // We support only 2 values for CompressionUnit: 0 (no compression) and 4, which means 16 clusters.
 #define COMPRESSION_UNIT_VAL_4  4
   bool IsCompressionUnitSupported() const { return CompressionUnit == 0 || CompressionUnit == COMPRESSION_UNIT_VAL_4; }
+  bool IsSparse() const { return (Flags & 0x8000) != 0; }
+  unsigned GetCompressionUnitForRead() const
+  {
+    return IsSparse() && (Flags & 0xFF) == 0 ? 0 : CompressionUnit;
+  }
 
   UInt32 ParseAttr(const Byte *p, unsigned size, UInt32 &type);
   bool ParseFileName(CFileNameAttr &a) const { return a.ParseFileNameAttr(Data, (unsigned)Data.Size()); }
@@ -411,7 +421,7 @@ struct CAttr
   {
     if (!NonResident)
       return Data.Size();
-    if (CompressionUnit != 0)
+    if (CompressionUnit != 0 || IsSparse())
       return PackSize;
     return AllocatedSize;
   }
@@ -476,7 +486,7 @@ unsigned CAttr::ParseAttr(const Byte * const p, const unsigned size, UInt32 &typ
       PRF_UTF16(Name)
     }
   }
-  // G16(p + 0x0C, Flags);
+  G16(p + 0x0C, Flags);
   // G16(p + 0x0E, Instance);
   // PRF(printf(" F=%4X", Flags));
   // PRF(printf(" Inst=%d", Instance));
@@ -495,7 +505,7 @@ unsigned CAttr::ParseAttr(const Byte * const p, const unsigned size, UInt32 &typ
     G64(p + 0x38, InitializedSize);
     G16(p + 0x20, offs);
     CompressionUnit = p[0x22];
-    if (CompressionUnit != 0)
+    if (CompressionUnit != 0 || IsSparse())
     {
       if (len < 0x48)
         return 0;
@@ -611,8 +621,8 @@ bool CAttr::ParseExtents(CRecordVector<CExtent> &extents,
            ...
            Last Element : (16 - total_clusters_in_previous_elements), no LCN
       */
-      if (compressionUnit == 0)
-        return false; // we need test examples to test case of Sparse with (compressionUnit == 0).
+      if (compressionUnit == 0 && !IsSparse())
+        return false;
       e.Phy = kEmptyExtent;
     }
     else
@@ -671,7 +681,13 @@ public:
 private:
   UInt64 _tags[kNumCacheChunks];
 
-  HRESULT SeekToPhys() { return InStream_SeekSet(Stream, _physPos); }
+  HRESULT SeekToPhys(UInt64 pos)
+  {
+    _physPos = (UInt64)(Int64)-1;
+    RINOK(InStream_SeekSet(Stream, pos))
+    _physPos = pos;
+    return S_OK;
+  }
   size_t GetCuSize() const { return (size_t)1 << (BlockSizeLog + CompressionUnit); }
 public:
 
@@ -702,11 +718,11 @@ public:
     _sparseMode = false;
     _curRem = 0;
     _virtPos = 0;
-    _physPos = 0;
+    UInt64 physPos = 0;
     const CExtent &e = Extents[0];
     if (!e.IsEmpty())
-      _physPos = e.Phy << BlockSizeLog;
-    return SeekToPhys();
+      physPos = e.Phy << BlockSizeLog;
+    return SeekToPhys(physPos);
   }
 };
 
@@ -737,7 +753,7 @@ static size_t Lznt1Dec(Byte * const dest, const size_t destLen,
       break;
     unsigned comprSize;
     {
-      const unsigned v = GetUi16(src);
+      const unsigned v = Get16_Unaligned(src);
       if (v == 0) // end_of_stream marker
         break;
       // bits [12:14] : chunk_size_order : (chunk_size = 512 << chunk_size_order)
@@ -792,7 +808,7 @@ static size_t Lznt1Dec(Byte * const dest, const size_t destLen,
             if (comprSize < 2)
               return 0;
             comprSize -= 2;
-            const unsigned v = GetUi16(src);
+            const unsigned v = Get16_Unaligned(src);
             src += 2;
 
             while (((sbOffset - 1) >> numDistBits) != 0)
@@ -918,12 +934,10 @@ Z7_COM7F_IMF(CInStream::Read(void * const data, UInt32 size, UInt32 * const proc
     if (!isCompressed)
     {
       const CExtent &e = Extents[i];
-      const UInt64 newPos = (e.Phy << BlockSizeLog) + _virtPos - (e.Virt << BlockSizeLog);
-      if (newPos != _physPos)
-      {
-        _physPos = newPos;
-        RINOK(SeekToPhys())
-      }
+      if (e.IsEmpty())
+        _sparseMode = true;
+      else
+        _physPos = (e.Phy << BlockSizeLog) + _virtPos - (e.Virt << BlockSizeLog);
       UInt64 next = Extents[i + 1].Virt;
       if (next > virtBlock2End)
         next &= ~((UInt64)comprUnitSize - 1);
@@ -966,18 +980,15 @@ Z7_COM7F_IMF(CInStream::Read(void * const data, UInt32 size, UInt32 * const proc
       if (e.Virt >= virtBlock2End)
         return S_FALSE;
       const UInt64 newPos = (e.Phy + (curVirt - e.Virt)) << BlockSizeLog;
-      if (newPos != _physPos)
-      {
-        _physPos = newPos;
-        RINOK(SeekToPhys())
-      }
+      RINOK(SeekToPhys(newPos))
       UInt64 numChunks = Extents[i + 1].Virt - curVirt;
       if (curVirt + numChunks > virtBlock2End)
         numChunks = virtBlock2End - curVirt;
       const size_t compressed = (size_t)numChunks << BlockSizeLog;
+      _physPos = (UInt64)(Int64)-1;
       RINOK(ReadStream_FALSE(Stream, _inBuf + offs, compressed))
       curVirt += numChunks;
-      _physPos += compressed;
+      _physPos = newPos + compressed;
       offs += compressed;
     }
     
@@ -1014,6 +1025,13 @@ Z7_COM7F_IMF(CInStream::Read(void * const data, UInt32 size, UInt32 * const proc
     memset(data, 0, size);
   else
   {
+    const UInt64 physPos = _physPos;
+    const HRESULT seekRes = SeekToPhys(physPos);
+    if (seekRes != S_OK)
+    {
+      _curRem = 0;
+      return seekRes;
+    }
     res = Stream->Read(data, size, &size);
     _physPos += size;
   }
@@ -1021,6 +1039,11 @@ Z7_COM7F_IMF(CInStream::Read(void * const data, UInt32 size, UInt32 * const proc
     *processedSize = size;
   _virtPos += size;
   _curRem -= size;
+  if (res != S_OK)
+  {
+    _physPos = (UInt64)(Int64)-1;
+    _curRem = 0;
+  }
   return res;
 }
 
@@ -1086,7 +1109,7 @@ static HRESULT DataParseExtents(const unsigned clusterSizeLog,
   const UInt64 packSizeCalc = numClusters << clusterSizeLog;
   if ((packSizeCalc >> clusterSizeLog) != numClusters) // optional
     return S_FALSE;
-  if (attr0.CompressionUnit != 0)
+  if (attr0.CompressionUnit != 0 || attr0.IsSparse())
   {
     if (packSizeCalc != attr0.PackSize)
       return S_FALSE;
@@ -1278,7 +1301,7 @@ HRESULT CMftRec::GetStream(IInStream *mainStream, const int dataIndex,
     {
       if (numNonResident != refNum || !attr0.IsCompressionUnitSupported())
         return S_FALSE;
-      if (clusterSizeLog > 12 && attr0.CompressionUnit)
+      if (clusterSizeLog > 12 && attr0.GetCompressionUnitForRead())
         return S_FALSE; // NOT SUPPORTED
       CInStream *ss;
       if (inStream_Object)
@@ -1297,7 +1320,7 @@ HRESULT CMftRec::GetStream(IInStream *mainStream, const int dataIndex,
       ss->Stream = mainStream;
       ss->BlockSizeLog = clusterSizeLog;
       ss->InUse = InUse();
-      RINOK(ss->InitAndSeek(attr0.CompressionUnit))
+      RINOK(ss->InitAndSeek(attr0.GetCompressionUnitForRead()))
       *destStream = streamTemp2.Detach();
       return S_OK;
     }
@@ -1326,7 +1349,7 @@ unsigned CMftRec::GetNumExtents(const int dataIndex,
     {
       if (numNonResident != refNum || !attr0.IsCompressionUnitSupported())
         return 0; // error;
-      if (clusterSizeLog > 12 && attr0.CompressionUnit)
+      if (clusterSizeLog > 12 && attr0.GetCompressionUnitForRead())
         return 0; // error;
       CRecordVector<CExtent> extents;
       if (DataParseExtents(clusterSizeLog, DataAttrs, (unsigned)dataIndex,
@@ -1609,7 +1632,7 @@ struct CDatabase
     */
   }
 
-  bool ParseSecuritySDS(ISequentialInStream *stream, const size_t size);
+  HRESULT ParseSecuritySDS(ISequentialInStream *stream, const size_t size);
 };
 
 HRESULT CDatabase::SeekToCluster(UInt64 cluster)
@@ -1756,16 +1779,16 @@ void CDatabase::GetItemPath(const unsigned index, NCOM::CPropVariant &path) cons
 }
 
 
-bool CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
+HRESULT CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
 {
   /* In most cases, identifiers (IDs) are listed sequentially with a step of 1, starting from 0x100.
      However, gaps in the IDs numbering are possible. So we use SecurIds[] array.
      The security data contains a duplicate copy every 256 KB. */
   const size_t kDupStep = (size_t)1 << 18; // 256 KB
   if (size == 0 || (size & 3))
-    return false;
+    return S_FALSE;
   if (((size - 1) & kDupStep) == 0) // we check that there is duplicate block
-    return false;
+    return S_FALSE;
   const size_t skipDupSize = ((size - 1) & ~(kDupStep * 2 - 1)) / 2;
   const size_t allocSize = size - skipDupSize;
   SecurData.Alloc(allocSize);
@@ -1780,16 +1803,15 @@ bool CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
       break;
     rem = MyMin(rem, kDupStep * 2);
     if (destPos + rem > allocSize)
-      return false; // internal code failure
+      return S_FALSE; // internal code failure
     Byte * const p = SecurData + destPos;
-    if (ReadStream_FALSE(stream, p, rem) != S_OK)
-      return false;
+    RINOK(ReadStream_FALSE(stream, p, rem))
     const size_t readSize = rem;
     if (rem < kDupStep)
-      return false;
+      return S_FALSE;
     rem -= kDupStep;
     if (memcmp(p, p + kDupStep, rem))
-      return false;
+      return S_FALSE;
     /* Garbage (non-zero) data is possible after the last entry
        in the main block but before the last block of duplicates.
        So we don't check zeros padding in last block.
@@ -1806,21 +1828,23 @@ bool CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
           break;
         // we skip zeros of padding or hole in data:
         if (*(const UInt32 *)(const void *)(p + pos))
-          return false;
+          return S_FALSE;
         pos += 4;
         rem -= 4;
         continue;
       }
       if (id <= idPrev)
-        return false;
+        return S_FALSE;
       idPrev = id;
-      if (Get64(p + pos + 8) != posInFile + pos) // entry offset
-        return false;
+      UInt64 entryOffset;
+      memcpy(&entryOffset, p + pos + 8, sizeof(entryOffset));
+      if (Get64(&entryOffset) != posInFile + pos) // entry offset
+        return S_FALSE;
       const UInt32 entrySize = Get32(p + pos + 16);
       if (entrySize < kEntrySize
           || (entrySize & 3)
           || rem < entrySize)
-        return false;
+        return S_FALSE;
       rem -= entrySize;
       {
         const Byte *p2 = p + pos + kEntrySize;
@@ -1833,7 +1857,7 @@ bool CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
         }
         while (num -= 4);
         if (hash != Get32(p + pos))
-          return false;
+          return S_FALSE;
       }
       memmove(SecurData + destPos, p + pos + kEntrySize, entrySize - kEntrySize);
       pos += entrySize;
@@ -1844,7 +1868,7 @@ bool CDatabase::ParseSecuritySDS(ISequentialInStream *stream, const size_t size)
     posInFile += readSize;
   }
   SecurData.ChangeSize_KeepData(destPos, destPos);
-  return true;
+  return S_OK;
 }
 
 
@@ -1882,7 +1906,10 @@ HRESULT CDatabase::Open()
     if (fileSize >= phySizeMax)
     {
       RINOK(InStream_SeekSet(InStream, Header.NumSectors << Header.SectorSizeLog))
-      if (ReadStream_FALSE(InStream, ByteBuf + kHeaderSize, kHeaderSize) == S_OK)
+      const HRESULT res = ReadStream_FALSE(InStream, ByteBuf + kHeaderSize, kHeaderSize);
+      if (res != S_OK && res != S_FALSE)
+        return res;
+      if (res == S_OK)
       {
         if (memcmp(ByteBuf, ByteBuf + kHeaderSize, kHeaderSize) == 0)
           PhySize = phySizeMax;
@@ -1891,7 +1918,7 @@ HRESULT CDatabase::Open()
     }
   }
  
-  SeekToCluster(Header.MftCluster);
+  RINOK(SeekToCluster(Header.MftCluster))
   const size_t recSize = (size_t)1 << Header.MftRecordSizeLog;
   // ByteBuf.Size() >= recSize
   RINOK(ReadStream_FALSE(InStream, ByteBuf, recSize))
@@ -2188,8 +2215,13 @@ HRESULT CDatabase::Open()
         {
           const UInt64 size64 = attr.GetSize();
           if (size64 <= (UInt32)1 << 29)
-            if (!ParseSecuritySDS(sdsStream, (size_t)size64))
+          {
+            const HRESULT res = ParseSecuritySDS(sdsStream, (size_t)size64);
+            if (res != S_OK && res != S_FALSE)
+              return res;
+            if (res != S_OK)
               ClearSecurInfo();
+          }
         }
         break;
       }
@@ -2796,6 +2828,81 @@ Z7_COM7F_IMF(CHandler::Close())
   return S_OK;
 }
 
+Z7_CLASS_IMP_IInStream(
+  CInStreamWithResult
+)
+public:
+  CMyComPtr<IInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+Z7_COM7F_IMF(CInStreamWithResult::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Seek(offset, seekOrigin, newPosition);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -2866,9 +2973,12 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     }
     res = NExtract::NOperationResult::kDataError;
     {
+      CMyComPtr2_Create<IInStream, CInStreamWithResult> inCallbackStream;
+      inCallbackStream->Stream = InStream;
       CMyComPtr<IInStream> inStream;
-      HRESULT hres = rec.GetStream(InStream, item.DataIndex,
+      HRESULT hres = rec.GetStream(inCallbackStream, item.DataIndex,
           Header.ClusterSizeLog, Header.NumClusters, &inStream, &inStream_Object);
+      RINOK(inCallbackStream->Result)
       if (hres == S_FALSE)
         res = NExtract::NOperationResult::kUnsupportedMethod;
       else
@@ -2876,7 +2986,15 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
         RINOK(hres)
         if (inStream)
         {
-          hres = copyCoder.Code(inStream, realOutStream, NULL, lps);
+          CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+          outCallbackStream->Stream = realOutStream;
+          CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> progressCallback;
+          progressCallback->Progress = lps;
+          hres = copyCoder.Code(inStream, outCallbackStream, NULL, progressCallback);
+          // Preserve destination failures before classifying stream data errors.
+          RINOK(outCallbackStream->Result)
+          RINOK(progressCallback->Result)
+          RINOK(inCallbackStream->Result)
           if (hres == S_OK)
           {
             if (copyCoder.TotalSize == unpackSize)

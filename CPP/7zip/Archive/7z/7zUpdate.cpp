@@ -1616,12 +1616,12 @@ Z7_COM7F_IMF(CFolderOutStream2::Write(const void *data, UInt32 size, UInt32 *pro
       data = (const Byte *)data + cur;
       size -= cur;
       _rem -= cur;
+      RINOK(result)
       if (_rem == 0)
       {
         RINOK(CloseFile())
         RINOK(ProcessEmptyFiles())
       }
-      RINOK(result)
       if (cur == 0)
         break;
       continue;
@@ -1708,14 +1708,14 @@ Z7_COM7F_IMF(CFolderInStream2::Read(void *data, UInt32 size, UInt32 *processedSi
       if (result != S_OK)
         Result = result;
 
+      RINOK(result)
+
       if (_rem == 0)
       {
         RINOK(CloseFile())
         RINOK(ProcessEmptyFiles())
       }
 
-      RINOK(result)
-      
       if (cur == 0)
         return E_FAIL;
 

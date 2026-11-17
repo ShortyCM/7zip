@@ -102,16 +102,15 @@ private:
   {
     CCoder *_coder;
   public:
-    bool NeedFlush;
-    CCoderReleaser(CCoder *coder Z7_lifetimebound): _coder(coder), NeedFlush(true) {}
+    CCoderReleaser(CCoder *coder Z7_lifetimebound): _coder(coder) {}
     ~CCoderReleaser()
     {
-      if (NeedFlush)
-        _coder->Flush();
+      _coder->m_OutWindowStream.SetStream(NULL);
     }
   };
   friend class CCoderReleaser;
 
+  HRESULT CodeLoop(ICompressProgressInfo *progress);
   HRESULT CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputProgressLimit = 0);
 public:
 

@@ -12,6 +12,9 @@ namespace NRegistryAssoc {
     CSysString ProgramKey;
     UString IconPath;
     int IconIndex;
+    bool IconIndexDefined;
+
+    CShellExtInfo(): IconIndex(-1), IconIndexDefined(false) {}
 
     bool ReadFromRegistry(HKEY hkey, const CSysString &ext);
     bool IsIt7Zip() const;

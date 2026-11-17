@@ -926,14 +926,14 @@ static void ItaniumDecode(Byte *data, UInt32 dataSize, UInt32 fileOffset)
         {
           const UInt32 kMask = 0xFFFFF;
           // UInt32 raw = ((UInt32)p[0]) | ((UInt32)p[1] << 8) | ((UInt32)p[2] << 16);
-          UInt32 raw = GetUi32(p);
+          UInt32 raw = GetValue32(p);
           UInt32 v = raw >> m;
           v -= fileOffset;
           v &= kMask;
           raw &= ~(kMask << m);
           raw |= (v << m);
           // p[0] = (Byte)raw; p[1] = (Byte)(raw >> 8); p[2] = (Byte)(raw >> 16);
-          SetUi32(p, raw)
+          SetValue32(p, raw);
         }
       }
       while (++m <= 4);
@@ -1028,7 +1028,7 @@ static void AudioDecode(Byte *srcData, UInt32 dataSize, UInt32 numChannels)
       prevDelta = (UInt32)(Int32)(signed char)(predicted - prevByte);
       prevByte = predicted;
       
-      const Int32 D = ((Int32)(signed char)curByte) << 3;
+      const Int32 D = (Int32)(signed char)curByte * 8;
       
       dif[0] += my_abs(D);
       dif[1] += my_abs(D - D1);

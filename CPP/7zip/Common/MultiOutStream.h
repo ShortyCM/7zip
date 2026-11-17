@@ -20,7 +20,7 @@ Z7_CLASS_IMP_COM_2(
     CMyComPtr<IOutStream> Stream;
     UInt64 Start;   // start pos of current Stream in global stream
     UInt64 Pos;     // pos in current Stream
-    UInt64 RealSize;
+    UInt64 RealSize; // (UInt64)-1 means unknown after a failed resize
     int Next;       // next older
     int Prev;       // prev newer
     AString Postfix;
@@ -30,6 +30,8 @@ Z7_CLASS_IMP_COM_2(
       const HRESULT res = Stream->SetSize(size);
       if (res == SZ_OK)
         RealSize = size;
+      else
+        Pos = RealSize = (UInt64)(Int64)-1;
       return res;
     }
   };

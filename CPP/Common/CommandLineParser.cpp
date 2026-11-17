@@ -10,6 +10,11 @@ namespace NCommandLineParser {
 
 bool SplitCommandLine(const UString &src, UString &dest1, UString &dest2)
 {
+  if (&src == &dest1 || &src == &dest2)
+  {
+    const UString copy(src);
+    return SplitCommandLine(copy, dest1, dest2);
+  }
   dest1.Empty();
   dest2.Empty();
   bool quoteMode = false;
@@ -61,7 +66,14 @@ void SplitCommandLine(const UString &s, UStringVector &parts)
 #else
 */
   UString sTemp (s);
-  sTemp.Trim();
+  sTemp.TrimLeft();
+  bool quoteMode = false;
+  for (unsigned i = 0; i < sTemp.Len(); ++i)
+    if (sTemp[i] == L'"')
+      quoteMode = !quoteMode;
+  if (!quoteMode)
+    while (!sTemp.IsEmpty() && (sTemp.Back() == L' ' || sTemp.Back() == L'\t'))
+      sTemp.DeleteBack();
   parts.Clear();
   for (;;)
   {
@@ -197,6 +209,11 @@ bool CParser::ParseString(const UString &s, const CSwitchForm *switchForms, unsi
 
 bool CParser::ParseStrings(const CSwitchForm *switchForms, unsigned numSwitches, const UStringVector &commandStrings)
 {
+  if (&commandStrings == &NonSwitchStrings)
+  {
+    const UStringVector copy(commandStrings);
+    return ParseStrings(switchForms, numSwitches, copy);
+  }
   StopSwitchIndex = -1;
   ErrorMessage.Empty();
   ErrorLine.Empty();

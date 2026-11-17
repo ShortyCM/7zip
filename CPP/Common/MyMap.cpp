@@ -97,14 +97,16 @@ bool CMap32::Set(UInt32 key, UInt32 value)
       CNode e2(n);
       e2.Len = (UInt16)i;
 
-      n.Len = (UInt16)(n.Len - (1 + i));
-      unsigned newBit = GetSubBit(key, bitPos + i);
-      n.Values[newBit] = value;
-      n.IsLeaf[newBit] = 1;
-      n.IsLeaf[1 - newBit] = 0;
-      n.Keys[newBit] = key;
-      n.Keys[1 - newBit] = (UInt32)Nodes.Size();
-      Nodes.Add(e2);
+      // Allocate before changing the tree, and reacquire the parent after growth.
+      const unsigned newIndex = Nodes.Add(e2);
+      CNode &parent = Nodes[cur];
+      parent.Len = (UInt16)(parent.Len - (1 + i));
+      const unsigned newBit = GetSubBit(key, bitPos + i);
+      parent.Values[newBit] = value;
+      parent.IsLeaf[newBit] = 1;
+      parent.IsLeaf[1 - newBit] = 0;
+      parent.Keys[newBit] = key;
+      parent.Keys[1 - newBit] = (UInt32)newIndex;
       return false;
     }
     const unsigned bit = GetSubBit(key, --bitPos);
@@ -129,10 +131,10 @@ bool CMap32::Set(UInt32 key, UInt32 value)
       e2.Keys[1 - newBit] = e2.Key = n.Keys[bit];
       e2.Len = (UInt16)(bitPos - (1 + i));
 
-      n.IsLeaf[bit] = 0;
-      n.Keys[bit] = (UInt32)Nodes.Size();
-
-      Nodes.Add(e2);
+      const unsigned newIndex = Nodes.Add(e2);
+      CNode &parent = Nodes[cur];
+      parent.IsLeaf[bit] = 0;
+      parent.Keys[bit] = (UInt32)newIndex;
       return false;
     }
     cur = (unsigned)n.Keys[bit];

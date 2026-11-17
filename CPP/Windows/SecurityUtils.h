@@ -59,7 +59,8 @@ public:
 
   bool OpenProcessToken(HANDLE processHandle, DWORD desiredAccess)
   {
-    Close();
+    if (!Close())
+      return false;
     return BOOLToBool(::OpenProcessToken(processHandle, desiredAccess, &_handle));
   }
 

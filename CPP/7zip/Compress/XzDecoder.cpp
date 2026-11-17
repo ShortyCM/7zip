@@ -94,7 +94,7 @@ HRESULT CDecoder::Decode(ISequentialInStream *seqInStream, ISequentialOutStream 
 
   RET_IF_WRAP_ERROR(outWrap.Res, res, SZ_ERROR_WRITE)
   RET_IF_WRAP_ERROR(progressWrap.Res, res, SZ_ERROR_PROGRESS)
-  RET_IF_WRAP_ERROR_CONFIRMED(inWrap.Res, res, SZ_ERROR_READ)
+  RET_IF_WRAP_ERROR_CONFIRMED(inWrap.Res, Stat.CombinedRes_Type, SZ_ERROR_READ)
 
   // return E_OUTOFMEMORY; // for debug check
 

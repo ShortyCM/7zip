@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../C/Alloc.h"
 
 #include "MemBlocks.h"
@@ -25,8 +27,14 @@ bool CMemBlockManager::AllocateSpace_bool(size_t numBlocks)
     return false;
   Byte *p = (Byte *)_data;
   for (size_t i = 0; i + 1 < numBlocks; i++, p += _blockSize)
-    *(Byte **)(void *)p = (p + _blockSize);
-  *(Byte **)(void *)p = NULL;
+  {
+    void *next = p + _blockSize;
+    memcpy(p, &next, sizeof(next));
+  }
+  {
+    void *next = NULL;
+    memcpy(p, &next, sizeof(next));
+  }
   _headFree = _data;
   return true;
 }
@@ -42,7 +50,7 @@ void *CMemBlockManager::AllocateBlock()
 {
   void *p = _headFree;
   if (p)
-    _headFree = *(void **)p;
+    memcpy(&_headFree, p, sizeof(_headFree));
   return p;
 }
 
@@ -50,7 +58,7 @@ void CMemBlockManager::FreeBlock(void *p)
 {
   if (!p)
     return;
-  *(void **)p = _headFree;
+  memcpy(p, &_headFree, sizeof(_headFree));
   _headFree = p;
 }
 

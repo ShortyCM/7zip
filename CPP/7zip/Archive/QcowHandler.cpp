@@ -74,8 +74,10 @@ Z7_class_CHandler_final: public CHandlerImg
   
   HRESULT Seek2(UInt64 offset)
   {
+    Reset_PosInArc();
+    RINOK(InStream_SeekSet(Stream, offset))
     _posInArc = offset;
-    return InStream_SeekSet(Stream, offset);
+    return S_OK;
   }
 
   HRESULT InitAndSeek()
@@ -186,7 +188,10 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
               size_t dataSize2 = dataSize3;
               // printf("\n\n=======\nReadStream = %6d _comprPos = %6d \n", (UInt32)dataSize2, (UInt32)_comprPos);
               const HRESULT hres = ReadStream(Stream, _cacheCompressed + _comprSize, &dataSize2);
-              _posInArc += dataSize2;
+              if (hres == S_OK)
+                _posInArc += dataSize2;
+              else
+                Reset_PosInArc();
               RINOK(hres)
               if (dataSize2 != dataSize3)
                 return E_FAIL;
@@ -231,7 +236,10 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
               RINOK(Seek2(v))
             }
             const HRESULT res = Stream->Read(data, size, &size);
-            _posInArc += size;
+            if (res == S_OK)
+              _posInArc += size;
+            else
+              Reset_PosInArc();
             _virtPos += size;
             if (processedSize)
               *processedSize = size;
@@ -297,11 +305,10 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
     {
       if (_incompatFlags)
       {
-        AString s ("incompatible: ");
-        // we need to show also high 32-bits.
-        s += FlagsToString(g_IncompatFlags_Characts,
-            Z7_ARRAY_SIZE(g_IncompatFlags_Characts), (UInt32)_incompatFlags);
-        prop = s;
+        NCOM::CPropVariant flags;
+        Flags64ToProp(g_IncompatFlags_Characts,
+            Z7_ARRAY_SIZE(g_IncompatFlags_Characts), _incompatFlags, flags);
+        prop = UString(L"incompatible: ") + flags.bstrVal;
       }
       break;
     }

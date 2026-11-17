@@ -41,6 +41,14 @@ namespace NZstd {
 #define DESCRIPTOR_Get_ContentSize_Flag3(d)   ((d) >> 5)
 #define DESCRIPTOR_Is_ContentSize_Defined(d)  (((d) & 0xe0) != 0)
 
+static UInt64 ReadUIntLE(const Byte *p, unsigned size)
+{
+  UInt64 value = 0;
+  for (unsigned i = 0; i < size; ++i)
+    value |= (UInt64)p[i] << (i * 8);
+  return value;
+}
+
 struct CFrameHeader
 {
   Byte Descriptor;
@@ -81,7 +89,7 @@ struct CFrameHeader
         n = (unsigned)1 << (n - 1);
         if ((size -= (int)n) < 0)
           return NULL;
-        d = GetUi32(p) & ((UInt32)(Int32)-1 >> (32 - 8u * n));
+        d = (UInt32)ReadUIntLE(p, n);
         p += n;
       }
       DictionaryId = d;
@@ -97,7 +105,7 @@ struct CFrameHeader
         n = (unsigned)1 << n;
         if ((size -= (int)n) < 0)
           return NULL;
-        v += GetUi64(p) & ((UInt64)(Int64)-1 >> (64 - 8u * n));
+        v += ReadUIntLE(p, n);
         p += n;
       }
       ContentSize = v;
@@ -229,6 +237,7 @@ static void PrintSize(AString &s, UInt64 w)
 
 Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
 
   CZstdDecInfo *p = NULL;
@@ -391,6 +400,7 @@ Z7_COM7F_IMF(CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -439,7 +449,7 @@ API_FUNC_static_IsArc IsArc_Zstd(const Byte *p, size_t size)
     return k_IsArc_Res_NEED_MORE;
   if (memcmp(p, k_Signature, kSignatureSize) != 0)
   {
-    const UInt32 v = GetUi32(p);
+    const UInt32 v = (UInt32)ReadUIntLE(p, 4);
     if ((v & kSkipFrameSignature_Mask) != kSkipFrameSignature)
       return k_IsArc_Res_NO;
     return k_IsArc_Res_YES;
@@ -540,7 +550,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *, IArchiveOpenCallb
       RINOK(callback->SetCompleted(NULL, &numBytes))
     }
 
-    const UInt32 v = GetUi32(sb.GetPtr());
+    const UInt32 v = (UInt32)ReadUIntLE(sb.GetPtr(), 4);
     if (v != kDataFrameSignature32)
     {
       if ((v & kSkipFrameSignature_Mask) != kSkipFrameSignature)
@@ -550,7 +560,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *, IArchiveOpenCallb
       sb.SkipInBuf(4);
       if (sb.Avail() < 4)
         break;
-      const UInt32 size = GetUi32(sb.GetPtr());
+      const UInt32 size = (UInt32)ReadUIntLE(sb.GetPtr(), 4);
       p->skipFrames_Size += size;
       sb.SkipInBuf(4);
       _phySize = sb.GetCurOffset() + size;
@@ -709,7 +719,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *, IArchiveOpenCallb
         break;
       p->checksum_Defined = true;
       // if (p->num_DataFrames == 1)
-      p->checksum = GetUi32(sb.GetPtr());
+      p->checksum = (UInt32)ReadUIntLE(sb.GetPtr(), 4);
       sb.SkipInBuf(4);
     }
   }
@@ -763,6 +773,75 @@ Z7_COM7F_IMF(CHandler::Close())
 }
 
 
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CInStreamWithReadResult
+  , ISequentialInStream
+)
+public:
+  CMyComPtr<ISequentialInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithReadResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithReadResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -806,8 +885,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     CMyComPtr2_Create<ICompressCoder, NCompress::NZstd::CDecoder> decoder;
 #endif
 
+    CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+    outCallbackStream->Stream = realOutStream;
     CMyComPtr2_Create<ISequentialOutStream, CDummyOutStream> outStreamSpec;
-    outStreamSpec->SetStream(realOutStream);
+    outStreamSpec->SetStream(outCallbackStream);
     outStreamSpec->Init();
     // realOutStream.Release();
     
@@ -818,7 +899,15 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     
     // _dataAfterEnd = false;
     // _needMoreInput = false;
-    const HRESULT hres = decoder.Interface()->Code(_seqStream, outStreamSpec, NULL, NULL, lps);
+    CMyComPtr2_Create<ISequentialInStream, CInStreamWithReadResult> inCallbackStream;
+    inCallbackStream->Stream = _seqStream;
+    CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> progressCallback;
+    progressCallback->Progress = lps;
+    const HRESULT hres = decoder.Interface()->Code(inCallbackStream, outStreamSpec, NULL, NULL, progressCallback);
+    // Stream errors must not be interpreted as decoder data errors.
+    RINOK(outCallbackStream->Result)
+    RINOK(progressCallback->Result)
+    RINOK(inCallbackStream->Result)
     /*
     {
       UInt64 t1 = decoder->GetInputProcessedSize();
@@ -861,8 +950,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       _unpackSize_Defined = true;
       _unpackSize = outSize;
 
-      // RINOK(
-      lps.Interface()->SetRatioInfo(&inSize, &outSize);
+      RINOK(lps.Interface()->SetRatioInfo(&inSize, &outSize))
       
 #ifdef Z7_USE_ZSTD_ORIG_DECODER
       if (hres == S_OK)
@@ -912,6 +1000,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   // return _props.SetProperties(names, values, numProps);
   // _smallMode = false;
   _disableHash = false;
@@ -960,6 +1049,7 @@ Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVAR
 #endif
   }
   return S_OK;
+  COM_TRY_END
 }
 
 

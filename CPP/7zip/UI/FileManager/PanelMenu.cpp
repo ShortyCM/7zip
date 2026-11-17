@@ -211,9 +211,8 @@ void CPanel::Properties()
       }
 
 
-      if (_folderRawProps)
+      if (_folderRawProps && _folderRawProps->GetNumRawProps(&numProps) == S_OK)
       {
-        _folderRawProps->GetNumRawProps(&numProps);
         for (UInt32 i = 0; i < numProps; i++)
         {
           CMyComBSTR name;
@@ -753,10 +752,13 @@ void CPanel::CreateSystemMenu(HMENU menuSpec,
       CMenuItem menuItem;
       menuItem.fMask = MIIM_SUBMENU | MIIM_TYPE | MIIM_ID;
       menuItem.fType = MFT_STRING;
-      menuItem.hSubMenu = popupMenu.Detach();
-      menuDestroyer.Disable();
+      menuItem.hSubMenu = popupMenu;
       LangString(IDS_SYSTEM, menuItem.StringValue);
-      menu.InsertItem(0, true, menuItem);
+      if (menu.InsertItem(0, true, menuItem) || menu.GetSubMenu(0) == hMenu)
+      {
+        popupMenu.Detach();
+        menuDestroyer.Disable();
+      }
     }
     /*
     if (Cmd < 100 && Cmd != 0)

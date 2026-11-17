@@ -5,6 +5,55 @@
 
 #include "../../../Common/MyString.h"
 
+#include "../../../Common/MyCom.h"
+#include "../../../Common/MyVector.h"
+#include "../../Archive/IArchive.h"
+
+Z7_CLASS_IMP_IInStream(
+  CMultiStream
+)
+
+  unsigned _streamIndex;
+  UInt64 _pos;
+  UInt64 _totalLength;
+
+public:
+
+  struct CSubStreamInfo
+  {
+    CMyComPtr<IInStream> Stream;
+    UInt64 Size;
+    UInt64 GlobalOffset;
+    CSubStreamInfo(): Size(0), GlobalOffset(0) {}
+  };
+
+  CMyComPtr<IArchiveUpdateCallbackFile> updateCallbackFile;
+  CObjectVector<CSubStreamInfo> Streams;
+ 
+  HRESULT Init()
+  {
+    UInt64 total = 0;
+    FOR_VECTOR (i, Streams)
+    {
+      const UInt64 size = Streams[i].Size;
+      if (size > (UInt64)0 - 1 - total)
+        return E_INVALIDARG;
+      total += size;
+    }
+    total = 0;
+    FOR_VECTOR (i, Streams)
+    {
+      CSubStreamInfo &s = Streams[i];
+      s.GlobalOffset = total;
+      total += s.Size;
+    }
+    _totalLength = total;
+    _pos = 0;
+    _streamIndex = 0;
+    return S_OK;
+  }
+};
+
 struct CSplitVolName
 {
   UString Changed;

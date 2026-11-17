@@ -2,6 +2,7 @@
 
 #include "StdAfx.h"
 
+#include "../../../Common/ComTry.h"
 #include "../../../Common/Wildcard.h"
 
 #include "../../../Windows/FileDir.h"
@@ -22,6 +23,7 @@ using namespace NCOM;
 
 Z7_COM7F_IMF(CAgent::SetFolder(IFolderFolder *folder))
 {
+  COM_TRY_BEGIN
   _updatePathPrefix.Empty();
   _updatePathPrefix_is_AltFolder = false;
   _agentFolder = NULL;
@@ -49,16 +51,19 @@ Z7_COM7F_IMF(CAgent::SetFolder(IFolderFolder *folder))
   else
     _updatePathPrefix = _proxy->GetDirPath_as_Prefix(_agentFolder->_proxyDirIndex);
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CAgent::SetFiles(const wchar_t *folderPrefix,
     const wchar_t * const *names, UInt32 numNames))
 {
+  COM_TRY_BEGIN
   _folderPrefix = us2fs(folderPrefix);
   _names.ClearAndReserve(numNames);
   for (UInt32 i = 0; i < numNames; i++)
     _names.AddInReserved(us2fs(names[i]));
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -234,7 +239,7 @@ struct CDirItemsCallback_AgentOut Z7_final: public IDirItemsCallback
   HRESULT ScanError(const FString &name, DWORD systemError) Z7_override
   {
     const HRESULT hres = HRESULT_FROM_WIN32(systemError);
-    if (FolderArchiveUpdateCallback)
+    if (FolderScanProgress)
       return FolderScanProgress->ScanError(fs2us(name), hres);
     ErrorCode = hres;
     return ErrorCode;
@@ -262,6 +267,7 @@ Z7_COM7F_IMF(CAgent::DoOperation(
     const wchar_t *sfxModule,
     IFolderArchiveUpdateCallback *updateCallback100))
 {
+  COM_TRY_BEGIN
   if (!CanUpdate())
     return E_NOTIMPL;
   
@@ -419,7 +425,7 @@ Z7_COM7F_IMF(CAgent::DoOperation(
       FOR_VECTOR (i, m_PropNames)
         names.Add((const wchar_t *)m_PropNames[i]);
 
-      CPropVariant *propValues = new CPropVariant[m_PropValues.Size()];
+      CObjArray<CPropVariant> propValues(m_PropValues.Size());
       try
       {
         FOR_VECTOR (i, m_PropValues)
@@ -428,10 +434,8 @@ Z7_COM7F_IMF(CAgent::DoOperation(
       }
       catch(...)
       {
-        delete []propValues;
         return E_FAIL;
       }
-      delete []propValues;
     }
   }
   m_PropNames.Clear();
@@ -469,6 +473,7 @@ Z7_COM7F_IMF(CAgent::DoOperation(
         processedPaths->Add(dirItems.GetPhyPath(i));
   }
   return res;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CAgent::DoOperation2(
@@ -494,6 +499,7 @@ Z7_COM7F_IMF(CAgent::DeleteItems(ISequentialOutStream *outArchiveStream,
     const UInt32 *indices, UInt32 numItems,
     IFolderArchiveUpdateCallback *updateCallback100))
 {
+  COM_TRY_BEGIN
   if (!CanUpdate())
     return E_NOTIMPL;
   CRecordVector<CUpdatePair2> updatePairs;
@@ -517,8 +523,11 @@ Z7_COM7F_IMF(CAgent::DeleteItems(ISequentialOutStream *outArchiveStream,
     if (curIndex < realIndices.Size())
       if (realIndices[curIndex] == i)
       {
-        RINOK(GetArc().GetItem_Path2(i, deletePath))
-        RINOK(updateCallback100->DeleteOperation(deletePath))
+        if (updateCallback100)
+        {
+          RINOK(GetArc().GetItem_Path2(i, deletePath))
+          RINOK(updateCallback100->DeleteOperation(deletePath))
+        }
         
         curIndex++;
         continue;
@@ -533,6 +542,7 @@ Z7_COM7F_IMF(CAgent::DeleteItems(ISequentialOutStream *outArchiveStream,
 
   updateCallback->Callback = &updateCallbackAgent;
   return CommonUpdate(outArchiveStream, updatePairs.Size(), updateCallback);
+  COM_TRY_END
 }
 
 HRESULT CAgent::CreateFolder(ISequentialOutStream *outArchiveStream,
@@ -765,6 +775,7 @@ HRESULT CAgent::UpdateOneFile(ISequentialOutStream *outArchiveStream,
 
 Z7_COM7F_IMF(CAgent::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   m_PropNames.Clear();
   m_PropValues.Clear();
   for (UInt32 i = 0; i < numProps; i++)
@@ -773,4 +784,5 @@ Z7_COM7F_IMF(CAgent::SetProperties(const wchar_t * const *names, const PROPVARIA
     m_PropValues.Add(values[i]);
   }
   return S_OK;
+  COM_TRY_END
 }

@@ -22,8 +22,18 @@
 #define HFS_SHOW_ALT_STREAMS
 
 #define Get16(p) GetBe16(p)
-#define Get32(p) GetBe32(p)
-#define Get64(p) GetBe64(p)
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe32a(&value);
+}
+static Z7_FORCE_INLINE UInt64 Get64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe64a(&value);
+}
 
 #define Get16a(p) GetBe16a(p)
 #define Get32a(p) GetBe32a(p)
@@ -1129,8 +1139,8 @@ HRESULT CDatabase::LoadCatalog(const CFork &fork, const CObjectVector<CIdExtents
         {
           if (item.Name.IsEmpty() && nameLen == 21)
           {
-            if (GetUi32(name) == 0 &&
-                GetUi32(name + 4) == 0 &&
+            if (Get32(name) == 0 &&
+                Get32(name + 4) == 0 &&
                 IsNameEqualTo(name + 8, "HFS+ Private Data"))
             {
               // it's folder for "Hard Links" files
@@ -1344,11 +1354,13 @@ API_FUNC_static_IsArc IsArc_HFS(const Byte *p, size_t size)
   if (size < kHfsHeaderSize)
     return k_IsArc_Res_NEED_MORE;
   p += kHeaderPadSize;
-  const UInt32 sig = GetUi32(p);
+  UInt32 sig;
+  memcpy(&sig, p, sizeof(sig));
+  sig = GetUi32a(&sig);
   if (sig != k_Signature_LE32_HFSP_VER4)
   if (sig != k_Signature_LE32_HFSX_VER5)
   if ((UInt16)sig != k_Signature_LE16_HFS_BD
-      || GetUi16(p + 0x7c) != k_Signature_LE16_HPLUS)
+      || p[0x7c] != 'H' || p[0x7d] != '+')
     return k_IsArc_Res_NO;
   return k_IsArc_Res_YES;
 }
@@ -1573,7 +1585,7 @@ Z7_class_CHandler_final:
       IInArchiveGetStream)
 
   CMyComPtr<IInStream> _stream;
-  HRESULT GetForkStream(const CFork &fork, ISequentialInStream **stream);
+  HRESULT GetForkStream(const CFork &fork, ISequentialInStream **stream, IInStream *sourceStream = NULL);
 };
 
 static const Byte kProps[] =
@@ -1825,7 +1837,7 @@ Z7_COM7F_IMF(CHandler::Close())
 
 static const UInt32 kCompressionBlockSize = 1 << 16;
 
-CDecoder::CDecoder(bool IsAdlerOptional)
+CDecoder::CDecoder(bool IsAdlerOptional): ProgressResult(S_OK)
 {
   /* Some new hfs files contain zlib resource fork without Adler checksum.
      We do not know how we must detect case where there is Adler
@@ -1970,7 +1982,8 @@ HRESULT CDecoder::ExtractResourceFork_ZLIB(
     if ((i & 0xFF) == 0)
     {
       const UInt64 progressPos = progressStart + outPos;
-      RINOK(extractCallback->SetCompleted(&progressPos))
+      ProgressResult = extractCallback->SetCompleted(&progressPos);
+      RINOK(ProgressResult)
     }
   }
 
@@ -2088,7 +2101,8 @@ HRESULT CDecoder::ExtractResourceFork_LZFSE(
     if ((i & 0xFF) == 0)
     {
       const UInt64 progressPos = progressStart + outPos;
-      RINOK(extractCallback->SetCompleted(&progressPos))
+      ProgressResult = extractCallback->SetCompleted(&progressPos);
+      RINOK(ProgressResult)
     }
   }
 
@@ -2284,6 +2298,7 @@ HRESULT CDecoder::Extract(
     UInt64 progressStart, IArchiveExtractCallback *extractCallback,
     int &opRes)
 {
+  ProgressResult = S_OK;
   opRes = NExtract::NOperationResult::kDataError;
 
   if (compressHeader.IsMethod_Uncompressed_Inline())
@@ -2362,6 +2377,58 @@ HRESULT CDecoder::Extract(
   if (hres == S_OK)
     opRes = NExtract::NOperationResult::kOK;
   return hres;
+}
+
+
+Z7_CLASS_IMP_IInStream(
+  CInStreamWithResult
+)
+public:
+  CMyComPtr<IInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+Z7_COM7F_IMF(CInStreamWithResult::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Stream->Seek(offset, seekOrigin, newPosition);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Write(data, size, processedSize);
 }
 
 
@@ -2445,6 +2512,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       fork = &item.ResourceFork;
     else if (item.CompressHeader.IsSupported)
     {
+      CMyComPtr2_Create<IInStream, CInStreamWithResult> inCallbackStream;
+      inCallbackStream->Stream = _stream;
       CMyComPtr<ISequentialInStream> inStreamFork;
       UInt64 forkSize = 0;
       const CByteBuffer *decmpfs_Data = NULL;
@@ -2453,7 +2522,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       {
         const CFork &resourceFork = item.ResourceFork;
         forkSize = resourceFork.Size;
-        GetForkStream(resourceFork, &inStreamFork);
+        GetForkStream(resourceFork, &inStreamFork, inCallbackStream);
       }
       else
       {
@@ -2463,13 +2532,18 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
       if (inStreamFork || decmpfs_Data)
       {
+        CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+        outCallbackStream->Stream = realOutStream;
         const HRESULT hres = decoder.Extract(
-            inStreamFork, realOutStream,
+            inStreamFork, realOutStream ? outCallbackStream.Interface() : NULL,
             forkSize,
             item.CompressHeader,
             decmpfs_Data,
             currentTotalSize, extractCallback,
             opRes);
+        RINOK(outCallbackStream->Result)
+        RINOK(decoder.ProgressResult)
+        RINOK(inCallbackStream->Result)
         if (hres != S_FALSE && hres != S_OK)
           return hres;
       }
@@ -2542,9 +2616,11 @@ Z7_COM7F_IMF(CHandler::GetNumberOfItems(UInt32 *numItems))
   return S_OK;
 }
 
-HRESULT CHandler::GetForkStream(const CFork &fork, ISequentialInStream **stream)
+HRESULT CHandler::GetForkStream(const CFork &fork, ISequentialInStream **stream, IInStream *sourceStream)
 {
   *stream = NULL;
+  if (!sourceStream)
+    sourceStream = _stream;
   
   if (!fork.IsOk(Header.BlockSizeLog))
     return S_FALSE;
@@ -2582,7 +2658,7 @@ HRESULT CHandler::GetForkStream(const CFork &fork, ISequentialInStream **stream)
   se.Phy = 0; // = SpecOffset ?
   se.Virt = virt;
   extentStream->Extents.Add(se);
-  extentStream->Stream = _stream;
+  extentStream->Stream = sourceStream;
   extentStream->Init();
   *stream = extentStream.Detach();
   return S_OK;
@@ -2590,6 +2666,7 @@ HRESULT CHandler::GetForkStream(const CFork &fork, ISequentialInStream **stream)
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  COM_TRY_BEGIN
   *stream = NULL;
 
   const CRef &ref = Refs[index];
@@ -2614,6 +2691,7 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
       fork = &item.DataFork;
   }
   return GetForkStream(*fork, stream);
+  COM_TRY_END
 }
 
 static const Byte k_Signature[] = {

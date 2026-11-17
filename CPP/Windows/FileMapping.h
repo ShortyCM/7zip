@@ -14,6 +14,8 @@ class CFileMapping: public CHandle
 public:
   WRes Create(DWORD protect, UInt64 maxSize, LPCTSTR name)
   {
+    if (!Close())
+      return ::GetLastError();
     _handle = ::CreateFileMapping(INVALID_HANDLE_VALUE, NULL, protect, (DWORD)(maxSize >> 32), (DWORD)maxSize, name);
     return ::GetLastError();
   }
@@ -24,6 +26,8 @@ public:
       #endif
       , LPCTSTR name)
   {
+    if (!Close())
+      return ::GetLastError();
     #ifdef UNDER_CE
     WRes res = Create(PAGE_READONLY, 0, name);
     if (res == ERROR_ALREADY_EXISTS)

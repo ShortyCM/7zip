@@ -3,6 +3,66 @@
 #include "StdAfx.h"
 
 #include "MultiStream.h"
+#include "../../Common/StreamUtils.h"
+
+Z7_COM7F_IMF(CMultiStream::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
+  if (_pos >= _totalLength)
+    return S_OK;
+
+  {
+    unsigned left = 0, mid = _streamIndex, right = Streams.Size();
+    for (;;)
+    {
+      CSubStreamInfo &m = Streams[mid];
+      if (_pos < m.GlobalOffset)
+        right = mid;
+      else if (_pos >= m.GlobalOffset + m.Size)
+        left = mid + 1;
+      else
+        break;
+      mid = (left + right) / 2;
+    }
+    _streamIndex = mid;
+  }
+  
+  CSubStreamInfo &s = Streams[_streamIndex];
+  const UInt64 localPos = _pos - s.GlobalOffset;
+  // Other returned streams or extraction can move the shared input stream.
+  RINOK(s.Stream->Seek((Int64)localPos, STREAM_SEEK_SET, NULL))
+  {
+    const UInt64 rem = s.Size - localPos;
+    if (size > rem)
+      size = (UInt32)rem;
+  }
+  const HRESULT result = s.Stream->Read(data, size, &size);
+  _pos += size;
+  if (processedSize)
+    *processedSize = size;
+  return result;
+}
+  
+Z7_COM7F_IMF(CMultiStream::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition))
+{
+  switch (seekOrigin)
+  {
+    case STREAM_SEEK_SET: break;
+    case STREAM_SEEK_CUR: RINOK(Stream_AddOffset(_pos, offset, offset)) break;
+    case STREAM_SEEK_END: RINOK(Stream_AddOffset(_totalLength, offset, offset)) break;
+    default: return STG_E_INVALIDFUNCTION;
+  }
+  if (offset < 0)
+    return HRESULT_WIN32_ERROR_NEGATIVE_SEEK;
+  _pos = (UInt64)offset;
+  if (newPosition)
+    *newPosition = (UInt64)offset;
+  return S_OK;
+}
+
 
 /*
 class COutVolumeStream:

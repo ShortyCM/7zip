@@ -73,8 +73,9 @@ bool FileTime_To_DosTime(const FILETIME &ft, UInt32 &dosTime) throw()
   Byte ms[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
   unsigned temp;
   UInt32 v;
-  v64 += (kNumTimeQuantumsInSecond * 2 - 1);
-  v64 /= kNumTimeQuantumsInSecond;
+  // Divide before rounding to avoid overflowing the full-width file time.
+  v64 = v64 / kNumTimeQuantumsInSecond
+      + (v64 % kNumTimeQuantumsInSecond != 0) + 1;
   sec = (unsigned)(v64 % 60);
   v64 /= 60;
   min = (unsigned)(v64 % 60);
@@ -169,7 +170,7 @@ void UnixTime_To_FileTime(UInt32 unixTime, FILETIME &ft) throw()
 
 UInt64 UnixTime64_To_FileTime64(Int64 unixTime) throw()
 {
-  return (UInt64)((Int64)kUnixTimeOffset + unixTime) * kNumTimeQuantumsInSecond;
+  return (kUnixTimeOffset + (UInt64)unixTime) * kNumTimeQuantumsInSecond;
 }
 
 
@@ -244,6 +245,8 @@ bool GetSecondsSince1601(unsigned year, unsigned month, unsigned day,
   Byte ms[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
   if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
     ms[1] = 29;
+  if (day > ms[month - 1])
+    return false;
   month--;
   for (unsigned i = 0; i < month; i++)
     numDays += ms[i];

@@ -49,7 +49,8 @@ Z7_COM7F_IMF2(void, CCksumHasher::Final(Byte *digest))
     size >>= 8;
   }
   const UInt32 val = crc.GetDigest();
-  SetUi32(digest, val)
+  for (unsigned i = 0; i < 4; i++)
+    digest[i] = (Byte)(val >> (i * 8));
 }
 
 REGISTER_HASHER(CCksumHasher, 0x203, "CKSUM", 4)

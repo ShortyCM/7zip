@@ -49,9 +49,11 @@ private:
   // PanelMode _panelMode;
   void AddColumn(PROPID aPropID);
 
-  void EnterToDirectory(const UString &dirName);
+  static void EnterToDirectory(CMyComPtr<IFolderFolder> &folder, const UString &dirName);
   void GetPathParts(UStringVector &pathParts);
+  static void GetPathParts(IFolderFolder *folder, UStringVector &pathParts);
   void SetCurrentDirVar();
+  void SetCurrentDirVar(IFolderFolder *folder);
   // HRESULT AfterUpdate(CWorkDirTempFile &tempFile, const UStringVector &pathVector);
 
 public:

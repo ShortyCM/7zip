@@ -36,7 +36,9 @@ CPlugin::CPlugin(const FString &fileName, CAgent *agent, UString archiveTypeName
   m_ArchiveHandler = agent;
   if (!m_FileInfo.Find(m_FileName))
     throw "error";
-  m_ArchiveHandler->BindToRootFolder(&_folder);
+  const HRESULT result = m_ArchiveHandler->BindToRootFolder(&_folder);
+  if (result != S_OK)
+    throw (unsigned)result;
 }
 
 CPlugin::~CPlugin() {}
@@ -199,13 +201,13 @@ void CPlugin::FreeFindData(struct PluginPanelItem *panelItems, int itemsNumber)
   delete []panelItems;
 }
 
-void CPlugin::EnterToDirectory(const UString &dirName)
+void CPlugin::EnterToDirectory(CMyComPtr<IFolderFolder> &folder, const UString &dirName)
 {
   CMyComPtr<IFolderFolder> newFolder;
   UString s = dirName;
   if (dirName.IsEqualTo(kDotsReplaceString))
     s = "..";
-  _folder->BindToFolder(s, &newFolder);
+  folder->BindToFolder(s, &newFolder);
   if (!newFolder)
   {
     if (dirName.IsEmpty())
@@ -213,65 +215,81 @@ void CPlugin::EnterToDirectory(const UString &dirName)
     else
       throw 40325;
   }
-  _folder = newFolder;
+  folder = newFolder;
 }
 
 int CPlugin::SetDirectory(const char *aszDir, int /* opMode */)
 {
   UString path = MultiByteToUnicodeString(aszDir, CP_OEMCP);
+  CMyComPtr<IFolderFolder> folder = _folder;
   if (path.IsEqualTo(STRING_PATH_SEPARATOR))
   {
-    _folder.Release();
-    m_ArchiveHandler->BindToRootFolder(&_folder);
+    folder.Release();
+    if (m_ArchiveHandler->BindToRootFolder(&folder) != S_OK || !folder)
+      return FALSE;
   }
   else if (path.IsEqualTo(".."))
   {
     CMyComPtr<IFolderFolder> newFolder;
-    _folder->BindToParentFolder(&newFolder);
+    folder->BindToParentFolder(&newFolder);
     if (!newFolder)
       throw 40312;
-    _folder = newFolder;
+    folder = newFolder;
   }
   else if (path.IsEmpty())
-    EnterToDirectory(path);
+    EnterToDirectory(folder, path);
   else
   {
     if (path[0] == WCHAR_PATH_SEPARATOR)
     {
-      _folder.Release();
-      m_ArchiveHandler->BindToRootFolder(&_folder);
+      folder.Release();
+      if (m_ArchiveHandler->BindToRootFolder(&folder) != S_OK || !folder)
+        return FALSE;
       path.DeleteFrontal(1);
     }
     UStringVector pathParts;
     SplitPathToParts(path, pathParts);
     FOR_VECTOR (i, pathParts)
-      EnterToDirectory(pathParts[i]);
+      EnterToDirectory(folder, pathParts[i]);
   }
-  SetCurrentDirVar();
+  SetCurrentDirVar(folder);
+  _folder = folder;
   return TRUE;
 }
 
 void CPlugin::GetPathParts(UStringVector &pathParts)
 {
+  GetPathParts(_folder, pathParts);
+}
+
+void CPlugin::GetPathParts(IFolderFolder *folder, UStringVector &pathParts)
+{
   pathParts.Clear();
-  CMyComPtr<IFolderFolder> folderItem = _folder;
+  CMyComPtr<IFolderFolder> folderItem = folder;
   for (;;)
   {
     CMyComPtr<IFolderFolder> newFolder;
-    folderItem->BindToParentFolder(&newFolder);
+    if (folderItem->BindToParentFolder(&newFolder) != S_OK)
+      throw 40312;
     if (!newFolder)
       break;
     NCOM::CPropVariant prop;
-    if (folderItem->GetFolderProperty(kpidName, &prop) == S_OK)
-      if (prop.vt == VT_BSTR)
-        pathParts.Insert(0, (const wchar_t *)prop.bstrVal);
+    if (folderItem->GetFolderProperty(kpidName, &prop) != S_OK)
+      throw 271932;
+    if (prop.vt == VT_BSTR)
+      pathParts.Insert(0, (const wchar_t *)prop.bstrVal);
     folderItem = newFolder;
   }
 }
 
 void CPlugin::SetCurrentDirVar()
 {
-  m_CurrentDir.Empty();
+  SetCurrentDirVar(_folder);
+}
+
+void CPlugin::SetCurrentDirVar(IFolderFolder *folder)
+{
+  UString currentDir;
 
   /*
   // kpidPath path has tail slash, but we don't need it for compatibility with default FAR style
@@ -286,12 +304,13 @@ void CPlugin::SetCurrentDirVar()
   */
 
   UStringVector pathParts;
-  GetPathParts(pathParts);
+  GetPathParts(folder, pathParts);
   FOR_VECTOR (i, pathParts)
   {
-    m_CurrentDir.Add_PathSepar();
-    m_CurrentDir += pathParts[i];
+    currentDir.Add_PathSepar();
+    currentDir += pathParts[i];
   }
+  m_CurrentDir = currentDir;
 }
 
 static const char * const kPluginFormatName = "7-ZIP";

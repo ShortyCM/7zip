@@ -95,16 +95,17 @@ static const char * const kMemException = "out of memory";
 
 CPropVariant& CPropVariant::operator=(LPCOLESTR lpszSrc)
 {
-  InternalClear();
-  vt = VT_BSTR;
-  wReserved1 = 0;
-  bstrVal = ::SysAllocString(lpszSrc);
-  if (!bstrVal && lpszSrc)
+  BSTR newString = ::SysAllocString(lpszSrc);
+  if (!newString && lpszSrc)
   {
     throw kMemException;
     // vt = VT_ERROR;
     // scode = E_OUTOFMEMORY;
   }
+  InternalClear();
+  vt = VT_BSTR;
+  wReserved1 = 0;
+  bstrVal = newString;
   return *this;
 }
 
@@ -152,16 +153,17 @@ CPropVariant& CPropVariant::operator=(const UString2 &s)
 
 CPropVariant& CPropVariant::operator=(const char *s)
 {
-  InternalClear();
-  vt = VT_BSTR;
-  wReserved1 = 0;
-  bstrVal = AllocBstrFromAscii(s);
-  if (!bstrVal)
+  BSTR newString = AllocBstrFromAscii(s);
+  if (!newString)
   {
     throw kMemException;
     // vt = VT_ERROR;
     // scode = E_OUTOFMEMORY;
   }
+  InternalClear();
+  vt = VT_BSTR;
+  wReserved1 = 0;
+  bstrVal = newString;
   return *this;
 }
 
@@ -291,7 +293,11 @@ HRESULT CPropVariant::Clear() throw()
 
 HRESULT CPropVariant::Copy(const PROPVARIANT* pSrc) throw()
 {
-  Clear();
+  if (pSrc == this)
+    return S_OK;
+  const HRESULT hr = Clear();
+  if (FAILED(hr))
+    return hr;
   switch ((unsigned)pSrc->vt)
   {
     CASE_SIMPLE_VT_VALUES
@@ -305,6 +311,8 @@ HRESULT CPropVariant::Copy(const PROPVARIANT* pSrc) throw()
 
 HRESULT CPropVariant::Attach(PROPVARIANT *pSrc) throw()
 {
+  if (pSrc == this)
+    return S_OK;
   const HRESULT hr = Clear();
   if (FAILED(hr))
     return hr;
@@ -317,6 +325,8 @@ HRESULT CPropVariant::Attach(PROPVARIANT *pSrc) throw()
 
 HRESULT CPropVariant::Detach(PROPVARIANT *pDest) throw()
 {
+  if (pDest == this)
+    return S_OK;
   if (pDest->vt != VT_EMPTY)
   {
     const HRESULT hr = PropVariant_Clear(pDest);
@@ -366,7 +376,7 @@ int CPropVariant::Compare(const CPropVariant &a) throw()
   switch ((unsigned)vt)
   {
     case VT_EMPTY: return 0;
-    // case VT_I1: return MyCompare(cVal, a.cVal);
+    case VT_I1: return MyCompare((signed char)cVal, (signed char)a.cVal);
     case VT_UI1: return MyCompare(bVal, a.bVal);
     case VT_I2: return MyCompare(iVal, a.iVal);
     case VT_UI2: return MyCompare(uiVal, a.uiVal);

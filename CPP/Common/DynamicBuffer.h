@@ -4,6 +4,7 @@
 #define ZIP7_INC_COMMON_DYNAMIC_BUFFER_H
 
 #include <string.h>
+#include <functional>
 
 #include "MyTypes.h"
 
@@ -63,7 +64,15 @@ public:
 
   void AddData(const T *data, size_t size)
   {
-    memcpy(GetCurPtrAndGrow(size), data, size * sizeof(T));
+    if (size == 0)
+      return;
+    const std::less<const T *> less;
+    const bool isInternal = _items && !less(data, _items) && less(data, _items + _pos);
+    const size_t offset = isInternal ? (size_t)(data - _items) : 0;
+    T *dest = GetCurPtrAndGrow(size);
+    if (isInternal)
+      data = _items + offset;
+    memcpy(dest, data, size * sizeof(T));
   }
 
   size_t GetPos() const { return _pos; }

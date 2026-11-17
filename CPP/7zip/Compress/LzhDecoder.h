@@ -39,16 +39,6 @@ class CCoder
   NHuffman::CDecoder256<NUM_CODE_BITS, NPT, 7> _decoderT;
   NHuffman::CDecoder<NUM_CODE_BITS, NC, 10> _decoderC;
 
-  class CCoderReleaser
-  {
-    CCoder *_coder;
-  public:
-    CCoderReleaser(CCoder *coder Z7_lifetimebound): _coder(coder) {}
-    void Disable() { _coder = NULL; }
-    ~CCoderReleaser() { if (_coder) _coder->_outWindow.Flush(); }
-  };
-  friend class CCoderReleaser;
-
   bool ReadTP(unsigned num, unsigned numBits, int spec);
   bool ReadC();
 

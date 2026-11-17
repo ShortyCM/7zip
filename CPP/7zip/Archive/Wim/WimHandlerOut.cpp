@@ -298,8 +298,23 @@ static HRESULT GetRootTime(
 }
 
 #define Set16(p, d) SetUi16a(p, d) // all calls are aligned
-#define Set32(p, d) SetUi32(p, d)
-#define Set64(p, d) SetUi64(p, d)
+
+static Z7_FORCE_INLINE void Write32(Byte *p, UInt32 value)
+{
+  UInt32 encoded;
+  SetUi32(&encoded, value)
+  memcpy(p, &encoded, sizeof(encoded));
+}
+
+static Z7_FORCE_INLINE void Write64(Byte *p, UInt64 value)
+{
+  UInt64 encoded;
+  SetUi64(&encoded, value)
+  memcpy(p, &encoded, sizeof(encoded));
+}
+
+#define Set32(p, d) { Write32(p, d); }
+#define Set64(p, d) { Write64(p, d); }
 
 void CResource::WriteTo(Byte *p) const
 {
@@ -1620,12 +1635,15 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outSeqStream, UInt32 nu
 
             if (props.Size != size && props.Size != (UInt64)(Int64)-1)
             {
-              const Int64 delta = (Int64)props.Size - (Int64)size;
-              const Int64 newComplexity = (Int64)totalComplexity + delta;
-              if (newComplexity > 0)
+              if (totalComplexity >= size)
               {
-                totalComplexity = (UInt64)newComplexity;
-                callback->SetTotal(totalComplexity);
+                const UInt64 base = totalComplexity - size;
+                const UInt64 newComplexity = base + props.Size;
+                if (newComplexity >= base)
+                {
+                  totalComplexity = newComplexity;
+                  RINOK(callback->SetTotal(totalComplexity))
+                }
               }
               mi.Size = props.Size;
               size = props.Size;
@@ -1750,8 +1768,8 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outSeqStream, UInt32 nu
             if (index != -1)
             {
               streams[index].RefCount++;
-              outStream->Seek(-(Int64)packSize, STREAM_SEEK_CUR, &curPos);
-              outStream->SetSize(curPos);
+              RINOK(outStream->Seek(-(Int64)packSize, STREAM_SEEK_CUR, &curPos))
+              RINOK(outStream->SetSize(curPos))
             }
             else
             {
@@ -1943,9 +1961,9 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outSeqStream, UInt32 nu
     if (i >= isChangedImage.Size() || isChangedImage[i])
     {
       char temp[16];
+      ConvertUInt32ToString(i + 1, temp);
       if (item.Name.IsEmpty())
       {
-        ConvertUInt32ToString(i + 1, temp);
         item.Name = "IMAGE";
         item.IsTag = true;
         CXmlProp &prop = item.Props.AddNew();

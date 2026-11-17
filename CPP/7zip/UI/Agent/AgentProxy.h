@@ -40,7 +40,7 @@ struct CProxyDir
   bool CrcIsDefined;
   bool Is_Changed_LongPath;
 
-  CProxyDir(): Name(NULL), NameLen(0), ParentDir(-1), Is_Changed_LongPath(false) {}
+  CProxyDir(): Name(NULL), NameLen(0), ArcIndex(-1), ParentDir(-1), Is_Changed_LongPath(false) {}
   ~CProxyDir() { delete [](wchar_t *)(void *)Name; }
 
   bool IsLeaf() const { return ArcIndex != -1; }

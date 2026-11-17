@@ -352,7 +352,7 @@ Z7_CLASS_IMP_COM_1(
   CCodecIcons InternalIcons;
   bool WasLoaded;
 
-  void LoadFormats();
+  HRESULT LoadFormats();
   // int FindFormat(const UString &type);
 public:
   CArchiveFolderManager():

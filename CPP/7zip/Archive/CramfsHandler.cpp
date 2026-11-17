@@ -188,7 +188,7 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
   unsigned _method;
   unsigned _blockSizeLog;
 
-  // Current file
+  // Decoders and buffers shared by file streams.
 
   NCompress::NZlib::CDecoder *_zlibDecoderSpec;
   CMyComPtr<ICompressCoder> _zlibDecoder;
@@ -198,9 +198,6 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
 
   CBufPtrSeqOutStream *_outStreamSpec;
   CMyComPtr<ISequentialOutStream> _outStream;
-
-  UInt32 _curBlocksOffset;
-  UInt32 _curNumBlocks;
 
   HRESULT OpenDir(int parent, UInt32 baseOffsetBase, unsigned level);
   HRESULT Open2(IInStream *inStream);
@@ -222,7 +219,7 @@ Z7_CLASS_IMP_CHandler_IInArchive_1(
 public:
   CHandler(): _data(NULL) {}
   ~CHandler() { Free(); }
-  HRESULT ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize);
+  HRESULT ReadBlock(UInt32 blocksOffset, UInt32 numBlocks, UInt64 blockIndex, Byte *dest, size_t blockSize);
 };
 
 static const Byte kProps[] =
@@ -554,14 +551,17 @@ class CCramfsInStream: public CCachedInStream
   HRESULT ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize) Z7_override;
 public:
   CHandler *Handler;
+  UInt32 BlocksOffset;
+  UInt32 NumBlocks;
+  CMyComPtr<IInArchive> ArchiveRef;
 };
 
 HRESULT CCramfsInStream::ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize)
 {
-  return Handler->ReadBlock(blockIndex, dest, blockSize);
+  return Handler->ReadBlock(BlocksOffset, NumBlocks, blockIndex, dest, blockSize);
 }
 
-HRESULT CHandler::ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize)
+HRESULT CHandler::ReadBlock(UInt32 blocksOffset, UInt32 numBlocks, UInt64 blockIndex, Byte *dest, size_t blockSize)
 {
   if (_method == k_Flags_Method_ZLIB)
   {
@@ -581,12 +581,18 @@ HRESULT CHandler::ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize)
   }
 
   const bool be = _h.be;
-  const Byte *p2 = _data + (_curBlocksOffset + (UInt32)blockIndex * 4);
-  const UInt32 start = (blockIndex == 0 ? _curBlocksOffset + _curNumBlocks * 4: Get32(p2 - 4));
+  const Byte *p2 = _data + (blocksOffset + (UInt32)blockIndex * 4);
+  const UInt32 start = (blockIndex == 0 ? blocksOffset + numBlocks * 4: Get32(p2 - 4));
   const UInt32 end = Get32(p2);
   if (end < start || end > _size)
     return S_FALSE;
   const UInt32 inSize = end - start;
+
+  if (inSize == 0)
+  {
+    memset(dest, 0, blockSize);
+    return S_OK;
+  }
 
   if (_method == k_Flags_Method_LZMA)
   {
@@ -594,8 +600,10 @@ HRESULT CHandler::ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize)
     if (inSize < kLzmaHeaderSize)
       return S_FALSE;
     const Byte *p = _data + start;
-    UInt32 destSize32 = GetUi32(p + LZMA_PROPS_SIZE);
-    if (destSize32 > blockSize)
+    UInt32 destSize32;
+    memcpy(&destSize32, p + LZMA_PROPS_SIZE, sizeof(destSize32));
+    destSize32 = GetUi32(&destSize32);
+    if (destSize32 != blockSize)
       return S_FALSE;
     SizeT destLen = destSize32;
     SizeT srcLen = inSize - kLzmaHeaderSize;
@@ -627,6 +635,52 @@ HRESULT CHandler::ReadBlock(UInt64 blockIndex, Byte *dest, size_t blockSize)
   return (inSize == _zlibDecoderSpec->GetInputProcessedSize() &&
       _outStreamSpec->GetPos() == blockSize) ? S_OK : S_FALSE;
 }
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
 
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
@@ -706,7 +760,14 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       {
         RINOK(hres)
         {
-          hres = copyCoder.Code(inSeqStream, outStream, NULL, lps);
+          CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+          outCallbackStream->Stream = outStream;
+          CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> progressCallback;
+          progressCallback->Progress = lps;
+          hres = copyCoder.Code(inSeqStream, outCallbackStream, NULL, progressCallback);
+          // Preserve destination failures before classifying archive data errors.
+          RINOK(outCallbackStream->Result)
+          RINOK(progressCallback->Result)
           if (hres == S_OK)
           {
             if (copyCoder.TotalSize == curSize)
@@ -730,6 +791,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
   COM_TRY_BEGIN
+  *stream = NULL;
 
   const CItem &item = _items[index];
   const Byte *p = _data + item.Offset;
@@ -765,9 +827,10 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 
   CCramfsInStream *streamSpec = new CCramfsInStream;
   CMyComPtr<IInStream> streamTemp = streamSpec;
-  _curNumBlocks = numBlocks;
-  _curBlocksOffset = offset;
+  streamSpec->NumBlocks = numBlocks;
+  streamSpec->BlocksOffset = offset;
   streamSpec->Handler = this;
+  streamSpec->ArchiveRef = this;
   if (!streamSpec->Alloc(_blockSizeLog, 21 - _blockSizeLog))
     return E_OUTOFMEMORY;
   streamSpec->Init(size);

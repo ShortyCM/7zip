@@ -202,8 +202,7 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream, const UInt64 *maxCheckStartPositi
   COM_TRY_BEGIN
   Close();
   {
-    if (_archive.Open(stream, maxCheckStartPosition) != S_OK)
-      return S_FALSE;
+    RINOK(_archive.Open(stream, maxCheckStartPosition))
     {
       UInt32 dict = _archive.DictionarySize;
       if (!_archive.IsSolid)

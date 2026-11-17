@@ -6,6 +6,7 @@
 
 #include "../../../../C/Sort.h"
 
+#include "../../../Common/AutoPtr.h"
 #include "../../../Common/ComTry.h"
 
 #include "../../../Windows/FileDir.h"
@@ -68,6 +69,7 @@ void FreeGlobalCodecs()
   g_ExternalCodecs_Ptr = NULL;
   #else
   g_CodecsRef.Release();
+  g_CodecsObj = NULL;
   #endif
 }
 
@@ -77,6 +79,13 @@ HRESULT LoadGlobalCodecs()
 
   if (g_CodecsObj)
     return S_OK;
+
+  struct CLoadReleaser
+  {
+    bool Loaded;
+    CLoadReleaser(): Loaded(false) {}
+    ~CLoadReleaser() { if (!Loaded) FreeGlobalCodecs(); }
+  } releaser;
 
   g_CodecsObj = new CCodecs;
 
@@ -91,10 +100,7 @@ HRESULT LoadGlobalCodecs()
 
   RINOK(g_CodecsObj->Load())
   if (g_CodecsObj->Formats.IsEmpty())
-  {
-    FreeGlobalCodecs();
     return E_NOTIMPL;
-  }
 
   Codecs_AddHashArcHandler(g_CodecsObj);
 
@@ -103,6 +109,7 @@ HRESULT LoadGlobalCodecs()
   g_ExternalCodecs_Ptr = &g_ExternalCodecs;
   #endif
 
+  releaser.Loaded = true;
   return S_OK;
 }
 
@@ -172,6 +179,7 @@ void CAgentFolder::LoadFolder(unsigned dirIndex)
 
 Z7_COM7F_IMF(CAgentFolder::LoadItems())
 {
+  COM_TRY_BEGIN
   if (!_agentSpec->_archiveLink.IsOpen)
     return E_FAIL;
   _items.Clear();
@@ -185,6 +193,7 @@ Z7_COM7F_IMF(CAgentFolder::LoadItems())
     }
   }
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CAgentFolder::GetNumberOfItems(UInt32 *numItems))
@@ -1185,7 +1194,7 @@ Z7_COM7F_IMF(CAgentFolder::GetPropertyInfo(UInt32 index, BSTR *name, PROPID *pro
 {
   COM_TRY_BEGIN
   UInt32 numProps;
-  _agentSpec->GetArchive()->GetNumberOfProperties(&numProps);
+  RINOK(_agentSpec->GetArchive()->GetNumberOfProperties(&numProps))
 
   /*
   bool thereIsPathProp = _proxy2 ?
@@ -1684,6 +1693,17 @@ Z7_COM7F_IMF(CAgent::Open(
   options.filePath = _archiveFilePath;
   options.callback = openArchiveCallback;
 
+  if (_proxy2)
+  {
+    delete _proxy2;
+    _proxy2 = NULL;
+  }
+  if (_proxy)
+  {
+    delete _proxy;
+    _proxy = NULL;
+  }
+
   HRESULT res = _archiveLink.Open(options);
 
   if (!_archiveLink.Arcs.IsEmpty())
@@ -1766,26 +1786,24 @@ HRESULT CAgent::ReadItems()
   
   // useProxy2 = false;
 
-  if (useProxy2)
-    _proxy2 = new CProxyArc2();
-  else
-    _proxy = new CProxyArc();
+  CMyUniquePtr<CProxyArc2> proxy2(useProxy2 ? new CProxyArc2() : NULL);
+  CMyUniquePtr<CProxyArc> proxy(useProxy2 ? NULL : new CProxyArc());
 
   size_t ramSize;
   if (NWindows::NSystem::GetRamSize(ramSize))
   {
     ramSize = ramSize / 4 * 3;
-    if (_proxy2)
-      _proxy2->MemUsage_Limit = ramSize;
+    if (useProxy2)
+      proxy2->MemUsage_Limit = ramSize;
     else
-      _proxy->MemUsage_Limit = ramSize;
+      proxy->MemUsage_Limit = ramSize;
   }
 
   {
     ThereIsPathProp = false;
     // ThereIsAltStreamProp = false;
     UInt32 numProps;
-    arc.Archive->GetNumberOfProperties(&numProps);
+    RINOK(arc.Archive->GetNumberOfProperties(&numProps))
     for (UInt32 i = 0; i < numProps; i++)
     {
       CMyComBSTR name;
@@ -1801,9 +1819,17 @@ HRESULT CAgent::ReadItems()
     }
   }
 
-  if (_proxy2)
-    return _proxy2->Load(GetArc(), _progress_for_Open);
-  return _proxy->Load(GetArc(), _progress_ArchiveOpenCallback_for_Open);
+  if (useProxy2)
+  {
+    RINOK(proxy2->Load(GetArc(), _progress_for_Open))
+    _proxy2 = proxy2.release();
+  }
+  else
+  {
+    RINOK(proxy->Load(GetArc(), _progress_ArchiveOpenCallback_for_Open))
+    _proxy = proxy.release();
+  }
+  return S_OK;
 }
 
 Z7_COM7F_IMF(CAgent::BindToRootFolder(IFolderFolder **resultFolder))
@@ -1868,7 +1894,12 @@ Z7_COM7F_IMF(CAgent::Extract(
     
   #endif
 
-  return GetArchive()->Extract(NULL, (UInt32)(Int32)-1, testMode, extractCallback);
+  CArchiveExtractCallback_Closer ecsCloser(extractCallbackSpec);
+  HRESULT res = GetArchive()->Extract(NULL, (UInt32)(Int32)-1, testMode, extractCallback);
+  const HRESULT res2 = ecsCloser.Close();
+  if (res == S_OK)
+    res = res2;
+  return res;
   COM_TRY_END
 }
 

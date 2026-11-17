@@ -145,7 +145,14 @@ void Sha256_Init(CSha256 *p)
 #define Maj(x,y,z) ((x&y)|(z&(x|y)))
 
 
-#define W_PRE(i) (W[(i) + (size_t)(j)] = GetBe32(data + ((size_t)(j) + i) * 4))
+static Z7_FORCE_INLINE UInt32 Sha256_GetBe32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe32(&value);
+}
+
+#define W_PRE(i) (W[(i) + (size_t)(j)] = Sha256_GetBe32(data + ((size_t)(j) + i) * 4))
 
 #define blk2_main(j, i)  s1(w(j, (i)-2)) + w(j, (i)-7) + s0(w(j, (i)-15))
 
@@ -424,8 +431,14 @@ void Sha256_Final(CSha256 *p, Byte *digest)
     {
       const UInt32 v0 = p->state[i];
       const UInt32 v1 = p->state[(size_t)i + 1];
-      SetBe32(digest    , v0)
-      SetBe32(digest + 4, v1)
+      digest[0] = (Byte)(v0 >> 24);
+      digest[1] = (Byte)(v0 >> 16);
+      digest[2] = (Byte)(v0 >> 8);
+      digest[3] = (Byte)v0;
+      digest[4] = (Byte)(v1 >> 24);
+      digest[5] = (Byte)(v1 >> 16);
+      digest[6] = (Byte)(v1 >> 8);
+      digest[7] = (Byte)v1;
       digest += 4 * 2;
     }
   }

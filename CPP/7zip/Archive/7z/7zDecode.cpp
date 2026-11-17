@@ -151,10 +151,15 @@ public:
 
 Z7_COM7F_IMF(CLockedSequentialInStreamMT::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
   NWindows::NSynchronization::CCriticalSectionLock lock(_glob->CriticalSection);
 
   if (_pos != _glob->Pos)
   {
+    _glob->Pos = (UInt64)0 - 1;
     RINOK(InStream_SeekSet(_glob->Stream, _pos))
     _glob->Pos = _pos;
   }
@@ -191,8 +196,13 @@ public:
 
 Z7_COM7F_IMF(CLockedSequentialInStreamST::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
+  if (processedSize)
+    *processedSize = 0;
+  if (size == 0)
+    return S_OK;
   if (_pos != _glob->Pos)
   {
+    _glob->Pos = (UInt64)0 - 1;
     RINOK(InStream_SeekSet(_glob->Stream, _pos))
     _glob->Pos = _pos;
   }

@@ -99,6 +99,7 @@ HRESULT CExternalCodecs::Load()
       if (prop.vt != VT_UI8)
         continue; // old Interface
       info.Id = prop.uhVal.QuadPart;
+      info.CodecIndex = i;
       
       prop.Clear();
       
@@ -137,6 +138,7 @@ HRESULT CExternalCodecs::Load()
       if (prop.vt != VT_UI8)
         continue;
       info.Id = prop.uhVal.QuadPart;
+      info.HasherIndex = i;
       
       prop.Clear();
       
@@ -378,6 +380,7 @@ HRESULT CreateCoder_Index(
     if (i < _externalCodecs->Codecs.Size())
     {
       const CCodecInfoEx &codec = _externalCodecs->Codecs[i];
+      const UInt32 codecIndex = codec.CodecIndex;
       // if (codec.Id == methodId)
       {
         if (encode)
@@ -386,15 +389,15 @@ HRESULT CreateCoder_Index(
           {
             if (codec.NumStreams == 1)
             {
-              const HRESULT res = _externalCodecs->GetCodecs->CreateEncoder(i, &IID_ICompressCoder, (void **)&cod.Coder);
+              const HRESULT res = _externalCodecs->GetCodecs->CreateEncoder(codecIndex, &IID_ICompressCoder, (void **)&cod.Coder);
               if (res != S_OK && res != E_NOINTERFACE && res != CLASS_E_CLASSNOTAVAILABLE)
                 return res;
               if (cod.Coder)
                 return res;
-              return _externalCodecs->GetCodecs->CreateEncoder(i, &IID_ICompressFilter, (void **)&filter);
+              return _externalCodecs->GetCodecs->CreateEncoder(codecIndex, &IID_ICompressFilter, (void **)&filter);
             }
             cod.NumStreams = codec.NumStreams;
-            return _externalCodecs->GetCodecs->CreateEncoder(i, &IID_ICompressCoder2, (void **)&cod.Coder2);
+            return _externalCodecs->GetCodecs->CreateEncoder(codecIndex, &IID_ICompressCoder2, (void **)&cod.Coder2);
           }
         }
         else
@@ -402,15 +405,15 @@ HRESULT CreateCoder_Index(
           {
             if (codec.NumStreams == 1)
             {
-              const HRESULT res = _externalCodecs->GetCodecs->CreateDecoder(i, &IID_ICompressCoder, (void **)&cod.Coder);
+              const HRESULT res = _externalCodecs->GetCodecs->CreateDecoder(codecIndex, &IID_ICompressCoder, (void **)&cod.Coder);
               if (res != S_OK && res != E_NOINTERFACE && res != CLASS_E_CLASSNOTAVAILABLE)
                 return res;
               if (cod.Coder)
                 return res;
-              return _externalCodecs->GetCodecs->CreateDecoder(i, &IID_ICompressFilter, (void **)&filter);
+              return _externalCodecs->GetCodecs->CreateDecoder(codecIndex, &IID_ICompressFilter, (void **)&filter);
             }
             cod.NumStreams = codec.NumStreams;
-            return _externalCodecs->GetCodecs->CreateDecoder(i, &IID_ICompressCoder2, (void **)&cod.Coder2);
+            return _externalCodecs->GetCodecs->CreateDecoder(codecIndex, &IID_ICompressCoder2, (void **)&cod.Coder2);
           }
       }
     }
@@ -538,7 +541,7 @@ HRESULT CreateHasher(
       if (codec.Id == methodId)
       {
         name = codec.Name;
-        return _externalCodecs->GetHashers->CreateHasher((UInt32)i, &hasher);
+        return _externalCodecs->GetHashers->CreateHasher(codec.HasherIndex, &hasher);
       }
     }
 

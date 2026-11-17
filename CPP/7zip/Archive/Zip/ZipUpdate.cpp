@@ -513,7 +513,7 @@ static HRESULT WriteDirHeader(COutArchive &archive, const CCompressionMethodMode
 }
 
 
-static void UpdatePropsFromStream(
+static HRESULT UpdatePropsFromStream(
     const CUpdateOptions &options,
     CUpdateItem &item, ISequentialInStream *fileInStream,
     IArchiveUpdateCallback *updateCallback, UInt64 &totalComplexity)
@@ -560,15 +560,22 @@ static void UpdatePropsFromStream(
     item.Size_WasSetFromStream = true;
     if (size != item.Size)
     {
-      const Int64 newComplexity = (Int64)totalComplexity + ((Int64)size - (Int64)item.Size);
-      if (newComplexity > 0)
+      // Unknown sizes were excluded from the initial total.
+      const UInt64 oldSize = item.Size == (UInt64)(Int64)-1 ? 0 : item.Size;
+      if (totalComplexity >= oldSize)
       {
-        totalComplexity = (UInt64)newComplexity;
-        updateCallback->SetTotal(totalComplexity);
+        const UInt64 base = totalComplexity - oldSize;
+        const UInt64 newComplexity = base + size;
+        if (newComplexity >= base)
+        {
+          totalComplexity = newComplexity;
+          RINOK(updateCallback->SetTotal(totalComplexity))
+        }
       }
       item.Size = size;
     }
   }
+  return S_OK;
 }
 
 
@@ -676,8 +683,9 @@ static HRESULT Update2St(
       // Note: for (ui.NewProps && !ui.NewData) it copies Props from old archive,
       // But we will rewrite all important properties later. But we can keep some properties like Comment
       itemEx = inputItems[(unsigned)ui.IndexInArc];
-      if (inArchive->Read_LocalItem_After_CdItem_Full(itemEx) != S_OK)
-        return E_NOTIMPL;
+      const HRESULT readRes = inArchive->Read_LocalItem_After_CdItem_Full(itemEx);
+      if (readRes != S_OK)
+        return readRes == S_FALSE ? E_NOTIMPL : readRes;
       (CItem &)item = itemEx;
     }
 
@@ -713,7 +721,7 @@ static HRESULT Update2St(
         }
         // seqMode = true; // to test seqMode
 
-        UpdatePropsFromStream(updateOptions, ui, fileInStream, updateCallback, totalComplexity);
+        RINOK(UpdatePropsFromStream(updateOptions, ui, fileInStream, updateCallback, totalComplexity))
 
         CCompressingResult compressingResult;
         
@@ -964,8 +972,9 @@ static HRESULT Update2(
     else
     {
       CItemEx inputItem = inputItems[(unsigned)ui.IndexInArc];
-      if (inArchive->Read_LocalItem_After_CdItem_Full(inputItem) != S_OK)
-        return E_NOTIMPL;
+      const HRESULT readRes = inArchive->Read_LocalItem_After_CdItem_Full(inputItem);
+      if (readRes != S_OK)
+        return readRes == S_FALSE ? E_NOTIMPL : readRes;
       complexity += inputItem.GetLocalFullSize();
       // complexity += inputItem.GetCentralExtraPlusCommentSize();
     }
@@ -978,7 +987,7 @@ static HRESULT Update2(
   complexity++; // end of central
   
   if (!unknownComplexity)
-    updateCallback->SetTotal(complexity);
+    RINOK(updateCallback->SetTotal(complexity))
 
   UInt64 totalComplexity = complexity;
 
@@ -1322,8 +1331,9 @@ static HRESULT Update2(
       else
       {
         itemEx = inputItems[(unsigned)ui.IndexInArc];
-        if (inArchive->Read_LocalItem_After_CdItem_Full(itemEx) != S_OK)
-          return E_NOTIMPL;
+        const HRESULT readRes = inArchive->Read_LocalItem_After_CdItem_Full(itemEx);
+        if (readRes != S_OK)
+          return readRes == S_FALSE ? E_NOTIMPL : readRes;
         (CItem &)item = itemEx;
         if (item.IsDir() != ui.IsDir)
           return E_NOTIMPL;
@@ -1350,7 +1360,7 @@ static HRESULT Update2(
         RINOK(res)
         if (!fileInStream)
           return E_INVALIDARG;
-        UpdatePropsFromStream(updateOptions, ui, fileInStream, updateCallback, totalComplexity);
+        RINOK(UpdatePropsFromStream(updateOptions, ui, fileInStream, updateCallback, totalComplexity))
         RINOK(updateCallback->SetOperationResult(NArchive::NUpdate::NOperationResult::kOK))
       }
 
@@ -1414,8 +1424,9 @@ static HRESULT Update2(
     if (!ui.NewProps || !ui.NewData)
     {
       itemEx = inputItems[(unsigned)ui.IndexInArc];
-      if (inArchive->Read_LocalItem_After_CdItem_Full(itemEx) != S_OK)
-        return E_NOTIMPL;
+      const HRESULT readRes = inArchive->Read_LocalItem_After_CdItem_Full(itemEx);
+      if (readRes != S_OK)
+        return readRes == S_FALSE ? E_NOTIMPL : readRes;
       (CItem &)item = itemEx;
     }
 
@@ -1916,8 +1927,22 @@ Z7_COM7F_IMF(CCacheOutStream::Write(const void *data, UInt32 size, UInt32 *proce
           RINOK(_hres)
         }
         PRF(printf("\n-- CCacheOutStream::WriteDirectly _phyPos = 0x%x, size = %d\n", (unsigned)_phyPos, (unsigned)size));
-        _hres = WriteStream(_seqStream, data, size);
-        RINOK(_hres)
+        UInt32 total = 0;
+        do
+        {
+          UInt32 cur;
+          _hres = _seqStream->Write((const Byte *)data + total, size - total, &cur);
+          total += cur;
+          if (_hres != S_OK)
+            break;
+          if (cur == 0)
+          {
+            _hres = E_FAIL;
+            break;
+          }
+        }
+        while (total < size);
+        size = total;
         if (processedSize)
           *processedSize = size;
         _virtPos += size;
@@ -1926,7 +1951,7 @@ Z7_COM7F_IMF(CCacheOutStream::Write(const void *data, UInt32 size, UInt32 *proce
         _phyPos += size;
         if (_phySize < _phyPos)
           _phySize = _phyPos;
-        return S_OK;
+        return _hres;
       }
     }
     else // (_cachedSize != 0)

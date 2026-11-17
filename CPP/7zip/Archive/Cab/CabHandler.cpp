@@ -526,6 +526,7 @@ Z7_CLASS_IMP_NOQIB_1(
 
   CMyComPtr<IArchiveExtractCallback> m_ExtractCallback;
   CMyComPtr<ISequentialOutStream> m_RealOutStream;
+  HRESULT m_WriteResult;
 
   void FreeTempBuf()
   {
@@ -536,8 +537,10 @@ Z7_CLASS_IMP_NOQIB_1(
   HRESULT OpenFile();
   HRESULT CloseFileWithResOp(Int32 resOp);
   HRESULT CloseFile();
+  HRESULT Write2(const void *data, UInt32 size, UInt32 *processedSize);
 public:
   HRESULT WriteEmptyFiles();
+  HRESULT GetWriteResult() const { return m_WriteResult; }
 
   CFolderOutStream(): TempBuf(NULL) {}
   ~CFolderOutStream() { FreeTempBuf(); }
@@ -577,6 +580,7 @@ void CFolderOutStream::Init(
   m_PosInFolder = 0;
   m_FileIsOpen = false;
   m_IsOk = true;
+  m_WriteResult = S_OK;
   TempBufMode = false;
   NumIdenticalFiles = 0;
 }
@@ -649,7 +653,7 @@ HRESULT CFolderOutStream::OpenFile()
         RINOK(m_ExtractCallback->PrepareOperation(NExtract::NAskMode::kSkip))
         m_CurrentIndex++;
         m_FileIsOpen = true;
-        CloseFile();
+        RINOK(CloseFile())
       }
     }
   }
@@ -686,6 +690,17 @@ HRESULT CFolderOutStream::WriteEmptyFiles()
 
 
 Z7_COM7F_IMF(CFolderOutStream::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (m_WriteResult != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return m_WriteResult;
+  }
+  return m_WriteResult = Write2(data, size, processedSize);
+}
+
+HRESULT CFolderOutStream::Write2(const void *data, UInt32 size, UInt32 *processedSize)
 {
   // (data == NULL) means Error_Data for solid folder flushing
   COM_TRY_BEGIN
@@ -743,11 +758,13 @@ Z7_COM7F_IMF(CFolderOutStream::Write(const void *data, UInt32 size, UInt32 *proc
 
         while (NumIdenticalFiles)
         {
-          HRESULT result = OpenFile();
+          RINOK(OpenFile())
           m_FileIsOpen = true;
           m_CurrentIndex++;
-          if (result == S_OK && m_RealOutStream && TempBuf)
-            result = WriteStream(m_RealOutStream, TempBuf, TempBufWritten);
+          if (m_RealOutStream && TempBuf)
+          {
+            RINOK(WriteStream(m_RealOutStream, TempBuf, TempBufWritten))
+          }
           
           if (!TempBuf && TempBufMode && m_RealOutStream)
           {
@@ -757,8 +774,6 @@ Z7_COM7F_IMF(CFolderOutStream::Write(const void *data, UInt32 size, UInt32 *proc
           {
             RINOK(CloseFile())
           }
-      
-          RINOK(result)
         }
       
         TempBufMode = false;
@@ -1188,6 +1203,8 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
             break;
         }
       
+        // Output and callback errors must not enter damaged-data recovery.
+        RINOK(cabFolderOutStream->GetWriteResult())
         if (res != S_OK)
         {
           if (res != S_FALSE)

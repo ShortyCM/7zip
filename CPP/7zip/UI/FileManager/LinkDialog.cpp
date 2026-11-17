@@ -235,7 +235,11 @@ void CLinkDialog::OnButton_SetPath(bool to)
   NWindows::NControl::CComboBox &combo = to ?
     _pathToCombo :
     _pathFromCombo;
-  combo.GetText(currentPath);
+  if (!combo.GetText(currentPath))
+  {
+    ShowLastErrorMessage();
+    return;
+  }
   // UString title = "Specify a location for output folder";
   const UString title = LangString(IDS_SET_FOLDER);
 
@@ -260,8 +264,11 @@ void CLinkDialog::ShowLastErrorMessage()
 void CLinkDialog::OnButton_Link()
 {
   UString from, to;
-  _pathFromCombo.GetText(from);
-  _pathToCombo.GetText(to);
+  if (!_pathFromCombo.GetText(from) || !_pathToCombo.GetText(to))
+  {
+    ShowLastErrorMessage();
+    return;
+  }
 
   if (from.IsEmpty())
     return;
@@ -315,22 +322,6 @@ void CLinkDialog::OnButton_Link()
       return;
     }
 
-    CByteBuffer data;
-    const bool isSymLink = (idb != IDR_LINK_TYPE_JUNCTION);
-    FillLinkData(data, to, isSymLink, isWSL);
-    if (data.Size() == 0)
-    {
-      ShowError(L"Incorrect link");
-      return;
-    }
-    
-    CReparseAttr attr;
-    if (!attr.Parse(data, data.Size()))
-    {
-      ShowError(L"Internal conversion error");
-      return;
-    }
-
     bool res;
     if (to.IsEmpty())
     {
@@ -338,7 +329,24 @@ void CLinkDialog::OnButton_Link()
       res = NIO::DeleteReparseData(us2fs(from));
     }
     else
+    {
+      CByteBuffer data;
+      const bool isSymLink = (idb != IDR_LINK_TYPE_JUNCTION);
+      FillLinkData(data, to, isSymLink, isWSL);
+      if (data.Size() == 0)
+      {
+        ShowError(L"Incorrect link");
+        return;
+      }
+
+      CReparseAttr attr;
+      if (!attr.Parse(data, data.Size()))
+      {
+        ShowError(L"Internal conversion error");
+        return;
+      }
       res = NIO::SetReparseData(us2fs(from), isDirLink, data, (DWORD)data.Size());
+    }
 
     if (!res)
     {

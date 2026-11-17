@@ -129,12 +129,17 @@ void Save_ShowPassword(bool showPassword)
   key.SetValue(kShowPassword, showPassword);
 }
 
-void Save_LimitGB(UInt32 limit_GB)
+LONG Save_LimitGB(UInt32 limit_GB)
 {
   CS_LOCK
   CKey key;
-  CreateMainKey(key, kKeyName);
-  Key_Set_UInt32(key, kMemLimit, limit_GB);
+  RINOK(CreateMainKey(key, kKeyName))
+  if (limit_GB == (UInt32)(Int32)-1)
+  {
+    const LONG result = key.DeleteValue(kMemLimit);
+    return result == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : result;
+  }
+  return key.SetValue(kMemLimit, limit_GB);
 }
 
 void CInfo::Load()
@@ -145,6 +150,10 @@ void CInfo::Load()
   OverwriteMode_Force = false;
   
   SplitDest.Val = true;
+  SplitDest.Def = false;
+  ElimDup.Init();
+  NtSecurity.Init();
+  ShowPassword.Init();
 
   Paths.Clear();
 
@@ -313,6 +322,12 @@ void CInfo::Load()
   ArcType = L"7z";
   ShowPassword = false;
   EncryptHeaders = false;
+
+  NtSecurity.Init();
+  AltStreams.Init();
+  HardLinks.Init();
+  SymLinks.Init();
+  PreserveATime.Init();
 
   CS_LOCK
   CKey key;
@@ -494,14 +509,14 @@ static LPCWSTR const kWorkDirPath = L"WorkDirPath";
 static LPCTSTR const kTempRemovableOnly = TEXT("TempRemovableOnly");
 
 
-void CInfo::Save()const
+LONG CInfo::Save()const
 {
   CS_LOCK
   CKey key;
-  CreateMainKey(key, kOptionsInfoKeyName);
-  key.SetValue(kWorkDirType, (UInt32)Mode);
-  key.SetValue(kWorkDirPath, fs2us(Path));
-  key.SetValue(kTempRemovableOnly, ForRemovableOnly);
+  RINOK(CreateMainKey(key, kOptionsInfoKeyName))
+  RINOK(key.SetValue(kWorkDirType, (UInt32)Mode))
+  RINOK(key.SetValue(kWorkDirPath, fs2us(Path)))
+  return key.SetValue(kTempRemovableOnly, ForRemovableOnly);
 }
 
 void CInfo::Load()
@@ -543,20 +558,31 @@ static LPCTSTR const kMenuIcons = TEXT("MenuIcons");
 static LPCTSTR const kElimDup = TEXT("ElimDupExtract");
 static LPCTSTR const kWriteZoneId = TEXT("WriteZoneIdExtract");
 
-void CContextMenuInfo::Save() const
+LONG CContextMenuInfo::Save() const
 {
   CS_LOCK
   CKey key;
-  CreateMainKey(key, kOptionsInfoKeyName);
+  RINOK(CreateMainKey(key, kOptionsInfoKeyName))
   
-  Key_Set_BoolPair(key, kCascadedMenu, Cascaded);
-  Key_Set_BoolPair(key, kMenuIcons, MenuIcons);
-  Key_Set_BoolPair(key, kElimDup, ElimDup);
+  if (Cascaded.Def)
+    RINOK(key.SetValue(kCascadedMenu, Cascaded.Val))
+  if (MenuIcons.Def)
+    RINOK(key.SetValue(kMenuIcons, MenuIcons.Val))
+  if (ElimDup.Def)
+    RINOK(key.SetValue(kElimDup, ElimDup.Val))
 
-  Key_Set_UInt32(key, kWriteZoneId, WriteZone);
+  if (WriteZone == (UInt32)(Int32)-1)
+  {
+    const LONG result = key.DeleteValue(kWriteZoneId);
+    if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND)
+      return result;
+  }
+  else
+    RINOK(key.SetValue(kWriteZoneId, WriteZone))
   
   if (Flags_Def)
-    key.SetValue(kContextMenu, Flags);
+    return key.SetValue(kContextMenu, Flags);
+  return ERROR_SUCCESS;
 }
 
 void CContextMenuInfo::Load()

@@ -1,8 +1,8 @@
 /* Sha3.h -- SHA-3 Hash
 : Igor Pavlov : Public domain */
 
-#ifndef ZIP7_INC_MD5_H
-#define ZIP7_INC_MD5_H
+#ifndef ZIP7_INC_SHA3_H
+#define ZIP7_INC_SHA3_H
 
 #include "7zTypes.h"
 
@@ -25,7 +25,7 @@ typedef struct
   Byte buffer[SHA3_NUM_STATE_WORDS * 8]; // last bytes will be unused with predefined blockSize values
 } CSha3;
 
-#define Sha3_SET_blockSize(p, blockSize) { (p)->blockSize = (blockSize); }
+#define Sha3_SET_blockSize(p, blockSizeValue) { (p)->blockSize = (blockSizeValue); }
 
 void Sha3_Init(CSha3 *p);
 void Sha3_Update(CSha3 *p, const Byte *data, size_t size);

@@ -20,6 +20,41 @@
 
 #include "LzxDecoder.h"
 
+static Z7_FORCE_INLINE UInt16 Lzx_Load16(const void *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Lzx_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE void Lzx_Store32(void *p, UInt32 value)
+{
+  UInt32 little;
+  SetUi32(&little, value)
+  memcpy(p, &little, sizeof(little));
+}
+
+#ifdef MY_CPU_LE_UNALIGN
+static Z7_FORCE_INLINE void Lzx_Copy4(void *dest, const void *src)
+{
+  UInt32 value;
+  memcpy(&value, src, sizeof(value));
+  memcpy(dest, &value, sizeof(value));
+}
+
+static Z7_FORCE_INLINE void Lzx_Store64(void *p, UInt64 value)
+{
+  memcpy(p, &value, sizeof(value));
+}
+#endif
+
 
 #ifdef MY_CPU_X86_OR_AMD64
 #if defined(MY_CPU_AMD64)  \
@@ -81,7 +116,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
 #if k_Lz_OverwriteSize >= 3
     // optimized code with overwrite to reduce the number of branches
   #ifdef MY_CPU_LE_UNALIGN
-    *(UInt32 *)(void *)(dest) = *(const UInt32 *)(const void *)(src);
+    Lzx_Copy4(dest, src);
   #else
     dest[0] = src[0];
     dest[1] = src[1];
@@ -115,7 +150,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
       {
 #ifdef MY_CPU_LE_UNALIGN
       #if 1
-        *(UInt32 *)(void *)(dest) = *(const UInt32 *)(const void *)(src);
+        Lzx_Copy4(dest, src);
         {
           const unsigned m = (unsigned)len & 7;
           dest += m;
@@ -124,8 +159,8 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
         if (len &= ~(unsigned)7)
           do
           {
-            *(UInt32 *)(void *)(dest    ) = *(const UInt32 *)(const void *)(src);
-            *(UInt32 *)(void *)(dest + 4) = *(const UInt32 *)(const void *)(src + 4);
+            Lzx_Copy4(dest, src);
+            Lzx_Copy4(dest + 4, src + 4);
             src += 8;
             dest += 8;
           }
@@ -134,7 +169,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
         // gcc-11 -O3 for x64 generates incorrect code here
         do
         {
-          *(UInt32 *)(void *)(dest) = *(const UInt32 *)(const void *)(src);
+          Lzx_Copy4(dest, src);
           src += 4;
           dest += 4;
         }
@@ -176,7 +211,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
 #ifdef MY_CPU_LE_UNALIGN
           #ifdef MY_CPU_64BIT
           const UInt64 a = (UInt64)b0 * 0x101010101010101;
-          *(UInt32 *)(void *)dest = (UInt32)a;
+          Lzx_Store32(dest, (UInt32)a);
           dest += (unsigned)len & 7;
           if (len &= ~(unsigned)7)
           {
@@ -189,7 +224,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
               // dest -= delta;
               do
               {
-                *(UInt64 *)(void *)dest = a;
+                Lzx_Store64(dest, a);
                 dest += 8;
               }
               while (len -= 8);
@@ -201,7 +236,7 @@ void CopyLzMatch(Byte *dest, const Byte *src, UInt32 len, UInt32 delta)
           const UInt32 a = (UInt32)b0 * 0x1010101;
           do
           {
-            *(UInt32 *)(void *)dest = a;
+            Lzx_Store32(dest, a);
             dest += 4;
           }
           while (len -= 4);
@@ -374,7 +409,7 @@ static struct CStat
 #endif
 
 #define X86_TRANSLATE_PRE(p) \
-    UInt32 v = GetUi32((p) - 4);
+    UInt32 v = Lzx_Load32((p) - 4);
 
 #define X86_TRANSLATE_POST(p) \
   { \
@@ -382,12 +417,12 @@ static struct CStat
     if (v < translationSize) { \
       UPDATE_STAT(g_stats_Num_x86[0]++;) \
       v += pos + 1; \
-      SetUi32((p) - 4, v) \
+      Lzx_Store32((p) - 4, v); \
     } \
     else if (v > pos) { \
       UPDATE_STAT(g_stats_Num_x86[1]++;) \
       v += translationSize; \
-      SetUi32((p) - 4, v) \
+      Lzx_Store32((p) - 4, v); \
     } else { UPDATE_STAT(g_stats_Num_x86[2]++;) } \
   }
 
@@ -522,7 +557,7 @@ static void x86_Filter4(Byte *data, size_t size, UInt32 processedSize4, UInt32 t
             (p - 16 * FILTER_NUM_VECTORS_IN_CHUNK), (unsigned)mask,
             (unsigned)index, (unsigned)((unsigned)(ptrdiff_t)(p - 16 * FILTER_NUM_VECTORS_IN_CHUNK) + index));
         */
-        p += (size_t)(unsigned)index - FILTER_CHUNK_BYTES_OFFSET;
+        p += (ptrdiff_t)(unsigned)index - FILTER_CHUNK_BYTES_OFFSET;
         FILTER_RETURN_IF_LIM(p)
         // mask &= ~(FILTER_MASK_INT)0x1f << index;  mask >>= index;
         X86_TRANSLATE_PRE(p)
@@ -699,8 +734,8 @@ HRESULT CDecoder::Flush() throw()
 #define NORMALIZE \
 { \
   const Byte *ptr = _buf + (_bitOffset >> 4) * 2; \
-  /* _value = (((UInt32)GetUi16(ptr) << 16) | GetUi16(ptr + 2)) << (_bitOffset & 15); */ \
-  const UInt32 v = GetUi32(ptr); \
+  /* _value = (((UInt32)Lzx_Load16(ptr) << 16) | GetUi16(ptr + 2)) << (_bitOffset & 15); */ \
+  const UInt32 v = Lzx_Load32(ptr); \
   _value = rotlFixed (v, ((int)_bitOffset & 15) + 16); \
 }
 
@@ -773,7 +808,7 @@ struct CBitDecoder
   UInt32 GetVal() const
   {
     const Byte *ptr = _buf + (_bitOffset >> 4) * 2;
-    const UInt32 v = GetUi32(ptr);
+    const UInt32 v = Lzx_Load32(ptr);
     return rotlFixed (v, ((int)_bitOffset & 15) + 16);
   }
 
@@ -793,7 +828,7 @@ struct CBitDecoder
     if ((_bitOffset + NUM_DELTA_BIT_OFFSET_BITS + 15) & ~(ptrdiff_t)15)
       return false;
     const Byte *ptr = _buf - NUM_DELTA_BYTES - 2;
-    if ((UInt16)(GetUi16(ptr) << (_bitOffset & 15)))
+    if ((UInt16)(Lzx_Load16(ptr) << (_bitOffset & 15)))
       return false;
     return true;
   }
@@ -863,7 +898,7 @@ public:
   UInt32 ReadUInt32()
   {
     const Byte *ptr = _buf;
-    const UInt32 v = GetUi32(ptr);
+    const UInt32 v = Lzx_Load32(ptr);
     _buf += 4;
     _size -= 4;
     return v;

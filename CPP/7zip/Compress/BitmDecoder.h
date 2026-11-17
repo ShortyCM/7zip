@@ -42,6 +42,12 @@ public:
     return (_stream.NumExtraBytes > 4 || kNumBigValueBits - _bitPos < (_stream.NumExtraBytes << 3));
   }
 
+  // Check the next numBits (<= kNumValueBits) without advancing or refilling.
+  bool ExtraBitsWereRead(unsigned numBits) const
+  {
+    return (_stream.NumExtraBytes > 4 || kNumBigValueBits - _bitPos < (_stream.NumExtraBytes << 3) + numBits);
+  }
+
   bool ExtraBitsWereRead_Fast() const
   {
     return (_stream.NumExtraBytes > 4);

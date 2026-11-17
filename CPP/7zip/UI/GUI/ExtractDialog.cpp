@@ -5,6 +5,7 @@
 #include "../../../Common/StringConvert.h"
 #include "../../../Common/Wildcard.h"
 
+#include "../../../Windows/ErrorMsg.h"
 #include "../../../Windows/FileName.h"
 #include "../../../Windows/FileDir.h"
 #include "../../../Windows/ResourceString.h"
@@ -13,6 +14,8 @@
 #include "../FileManager/HelpUtils.h"
 #endif
 
+
+#include "../Explorer/MyMessages.h"
 
 #include "../FileManager/BrowseDialog.h"
 #include "../FileManager/LangUtils.h"
@@ -94,19 +97,20 @@ static const unsigned kHistorySize = 16;
 #ifndef Z7_SFX
 
 // it's used in CompressDialog also
-void AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal);
-void AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal)
+bool AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal);
+bool AddComboItems(NControl::CComboBox &combo, const UInt32 *langIDs, unsigned numItems, const int *values, int curVal)
 {
   unsigned curSel = 0;
   for (unsigned i = 0; i < numItems; i++)
   {
     UString s = LangString(langIDs[i]);
     s.RemoveChar(L'&');
-    combo.AddString_SetItemData(s, (LPARAM)i);
+    if (combo.AddString_SetItemData(s, (LPARAM)i) < 0)
+      return false;
     if (values[i] == curVal)
       curSel = i;
   }
-  combo.SetCurSel(curSel);
+  return combo.SetCurSel(curSel) != CB_ERR;
 }
 
 // it's used in CompressDialog also
@@ -226,8 +230,13 @@ bool CExtractDialog::OnInit()
   _pathMode.Attach(GetItem(IDC_EXTRACT_PATH_MODE));
   _overwriteMode.Attach(GetItem(IDC_EXTRACT_OVERWRITE_MODE));
 
-  AddComboItems(_pathMode, kPathMode_IDs, Z7_ARRAY_SIZE(kPathMode_IDs), kPathModeButtonsVals, PathMode);
-  AddComboItems(_overwriteMode, kOverwriteMode_IDs, Z7_ARRAY_SIZE(kOverwriteMode_IDs), kOverwriteButtonsVals, OverwriteMode);
+  if (!AddComboItems(_pathMode, kPathMode_IDs, Z7_ARRAY_SIZE(kPathMode_IDs), kPathModeButtonsVals, PathMode) ||
+      !AddComboItems(_overwriteMode, kOverwriteMode_IDs, Z7_ARRAY_SIZE(kOverwriteMode_IDs), kOverwriteButtonsVals, OverwriteMode))
+  {
+    ShowErrorMessage(*this, NError::MyFormatMessage(ERROR_NOT_ENOUGH_MEMORY));
+    CModalDialog::OnCancel();
+    return false;
+  }
 
   #endif
 
@@ -246,9 +255,6 @@ bool CExtractDialog::OnInit()
 void CExtractDialog::UpdatePasswordControl()
 {
   _passwordControl.SetPasswordChar(IsShowPasswordChecked() ? 0 : TEXT('*'));
-  UString password;
-  _passwordControl.GetText(password);
-  _passwordControl.SetText(password);
 }
 #endif
 
@@ -276,7 +282,12 @@ bool CExtractDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 void CExtractDialog::OnButtonSetPath()
 {
   UString currentPath;
-  _path.GetText(currentPath);
+  if (!_path.GetText(currentPath))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
   UString title = LangString(IDS_EXTRACT_SET_FOLDER);
   UString resultPath;
   if (!MyBrowseForFolder(*this, title, currentPath, resultPath))
@@ -298,7 +309,51 @@ void AddUniqueString(UStringVector &list, const UString &s)
 
 void CExtractDialog::OnOK()
 {
+  UString s;
+
+  #ifndef Z7_NO_REGISTRY
+  int currentItem = _path.GetCurSel();
+  if (currentItem != CB_ERR)
+  {
+    if (_path.GetLBText(currentItem, s) == CB_ERR)
+    {
+      ShowErrorMessage(*this, NError::MyFormatMessage(ERROR_INVALID_DATA));
+      return;
+    }
+  }
+  else
+  #endif
+  {
+    if (!_path.GetText(s))
+    {
+      const DWORD error = ::GetLastError();
+      ShowErrorMessage(*this, NError::MyFormatMessage(error));
+      return;
+    }
+    #ifndef Z7_NO_REGISTRY
+    if (_path.GetCount() >= (int)kHistorySize)
+      currentItem = _path.GetCount() - 1;
+    #endif
+  }
+
   #ifndef Z7_SFX
+  UString password;
+  if (!_passwordControl.GetText(password))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
+
+  const bool splitDest = IsButtonCheckedBool(IDX_EXTRACT_NAME_ENABLE);
+  UString pathName;
+  if (splitDest && !_pathName.GetText(pathName))
+  {
+    const DWORD error = ::GetLastError();
+    ShowErrorMessage(*this, NError::MyFormatMessage(error));
+    return;
+  }
+
   int pathMode2 = kPathModeButtonsVals[_pathMode.GetCurSel()];
   if (PathMode != NExtract::NPathMode::kCurPaths ||
       pathMode2 != NExtract::NPathMode::kFullPaths)
@@ -308,7 +363,7 @@ void CExtractDialog::OnOK()
 
   // _filesMode = (NExtractionDialog::NFilesMode::EEnum)GetFilesMode();
 
-  _passwordControl.GetText(Password);
+  Password = password;
 
   #endif
 
@@ -347,36 +402,13 @@ void CExtractDialog::OnOK()
 
   #endif
   
-  UString s;
-  
-  #ifdef Z7_NO_REGISTRY
-  
-  _path.GetText(s);
-  
-  #else
-
-  int currentItem = _path.GetCurSel();
-  if (currentItem == CB_ERR)
-  {
-    _path.GetText(s);
-    if (_path.GetCount() >= (int)kHistorySize)
-      currentItem = _path.GetCount() - 1;
-  }
-  else
-    _path.GetLBText(currentItem, s);
-  
-  #endif
-
   s.Trim();
   NName::NormalizeDirPathPrefix(s);
   
   #ifndef Z7_SFX
   
-  const bool splitDest = IsButtonCheckedBool(IDX_EXTRACT_NAME_ENABLE);
   if (splitDest)
   {
-    UString pathName;
-    _pathName.GetText(pathName);
     pathName.Trim();
     s += pathName;
     NName::NormalizeDirPathPrefix(s);

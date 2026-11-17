@@ -132,7 +132,8 @@ Z7_COM7F_IMF(CEncoder::WriteCoderProperties(ISequentialOutStream *outStream))
   const UInt32 kPropSize = 5;
   Byte props[kPropSize];
   props[0] = (Byte)_props.Order;
-  SetUi32(props + 1, _props.MemSize)
+  for (unsigned i = 0; i < 4; ++i)
+    props[i + 1] = (Byte)(_props.MemSize >> (i * 8));
   return WriteStream(outStream, props, kPropSize);
 }
 

@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <wchar.h>
+
 #include "../Common/StringConvert.h"
 
 #include "ProcessUtils.h"
@@ -39,7 +41,8 @@ WRes CProcess::Create(LPCWSTR imageName, const UString &params, LPCWSTR curDir)
   }
   */
 
-  Close();
+  if (!Close())
+    return ::GetLastError();
   const UString params2 =
       #ifndef UNDER_CE
       GetQuotedString(imageName) + L' ' +
@@ -48,7 +51,10 @@ WRes CProcess::Create(LPCWSTR imageName, const UString &params, LPCWSTR curDir)
   #ifdef UNDER_CE
   curDir = NULL;
   #else
-  imageName = NULL;
+  // Parsing the executable from the command line is limited to MAX_PATH.
+  // Keep name search and default-extension behavior for short names.
+  if (wcslen(imageName) < MAX_PATH)
+    imageName = NULL;
   #endif
   PROCESS_INFORMATION pi;
   BOOL result;

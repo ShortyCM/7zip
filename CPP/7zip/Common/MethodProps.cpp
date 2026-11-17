@@ -2,6 +2,7 @@
 
 #include "StdAfx.h"
 
+#include "../../Common/MyBuffer.h"
 #include "../../Common/StringToInt.h"
 
 #include "MethodProps.h"
@@ -28,7 +29,7 @@ UInt64 Calc_From_Val_Percents(UInt64 val, UInt64 percents)
     if (val <= (UInt64)(Int64)-1 / r)
       v2 = val * r / 100;
     else
-      v2 = val / 100 * r;
+      v2 = val / 100 * r + (val % 100) * r / 100;
     res += v2;
     if (res < v2)
       return (UInt64)(Int64)-1;
@@ -40,7 +41,7 @@ UInt64 Calc_From_Val_Percents(UInt64 val, UInt64 percents)
 
 bool StringToBool(const wchar_t *s, bool &res)
 {
-  if (s[0] == 0 || (s[0] == '+' && s[1] == 0) || StringsAreEqualNoCase_Ascii(s, "ON"))
+  if (!s || s[0] == 0 || (s[0] == '+' && s[1] == 0) || StringsAreEqualNoCase_Ascii(s, "ON"))
   {
     res = true;
     return true;
@@ -180,7 +181,12 @@ HRESULT ParseMtProp2(const UString &name, const PROPVARIANT &prop, UInt32 &numTh
     if (end == start)
       return E_INVALIDARG;
     if (isPercent)
-      v = numThreads * v / 100;
+    {
+      const UInt64 value = (UInt64)numThreads * v / 100;
+      if (value > (UInt32)0xFFFFFFFF)
+        return E_INVALIDARG;
+      v = (UInt32)value;
+    }
     start = end;
   }
 
@@ -262,7 +268,8 @@ static HRESULT PROPVARIANT_to_DictSize(const PROPVARIANT &prop, NCOM::CPropVaria
   if (prop.vt == VT_BSTR)
   {
     UString s;
-    s = prop.bstrVal;
+    if (prop.bstrVal)
+      s = prop.bstrVal;
     return StringToDictSize(s, destProp);
   }
   return E_INVALIDARG;
@@ -287,25 +294,17 @@ void CProps::AddPropBool(PROPID propid, bool val)
 
 class CCoderProps
 {
-  PROPID *_propIDs;
-  NCOM::CPropVariant *_props;
+  CObjArray<PROPID> _propIDs;
+  CObjArray<NCOM::CPropVariant> _props;
   unsigned _numProps;
   unsigned _numPropsMax;
 public:
   CCoderProps(unsigned numPropsMax):
-      _propIDs(NULL),
-      _props(NULL),
+      _propIDs(numPropsMax),
+      _props(numPropsMax),
       _numProps(0),
       _numPropsMax(numPropsMax)
-  {
-    _propIDs = new PROPID[numPropsMax];
-    _props = new NCOM::CPropVariant[numPropsMax];
-  }
-  ~CCoderProps()
-  {
-    delete []_propIDs;
-    delete []_props;
-  }
+  {}
   void AddProp(const CProp &prop);
   HRESULT SetProps(ICompressSetCoderProperties *setCoderProperties)
   {
@@ -760,6 +759,7 @@ HRESULT COneMethodInfo::ParseMethodFromPROPVARIANT(const UString &realName, cons
   if (value.vt != VT_BSTR)
     return E_INVALIDARG;
   UString s;
-  s = value.bstrVal;
+  if (value.bstrVal)
+    s = value.bstrVal;
   return ParseMethodFromString(s);
 }

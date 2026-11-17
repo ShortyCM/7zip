@@ -289,10 +289,29 @@ static void CopyPopMenu_IfRequired(CMenuItem &item)
   if (item.hSubMenu)
   {
     CMenu popup;
-    popup.CreatePopup();
+    CMenuDestroyer menuDestroyer(popup);
+    if (!popup.CreatePopup())
+      throw 210503;
     CopyMenu(item.hSubMenu, popup);
-    item.hSubMenu = popup;
+    item.hSubMenu = popup.Detach();
+    menuDestroyer.Disable();
   }
+}
+
+static bool CopyAndInsertMenuItem(CMenu &destMenu, unsigned position, CMenuItem &item)
+{
+  CopyPopMenu_IfRequired(item);
+  CMenu popup;
+  popup.Attach(item.hSubMenu);
+  CMenuDestroyer menuDestroyer(popup);
+  if (destMenu.InsertItem(position, true, item)
+      || (item.hSubMenu && destMenu.GetSubMenu((int)position) == item.hSubMenu))
+  {
+    popup.Detach();
+    menuDestroyer.Disable();
+    return true;
+  }
+  return false;
 }
 
 /* destMenuSpec must be non-NULL handle to created empty popup menu */
@@ -309,8 +328,7 @@ static void CopyMenu(HMENU srcMenuSpec, HMENU destMenuSpec)
     item.fMask = MIIM_SUBMENU | MIIM_STATE | MIIM_ID | Get_fMask_for_FType_and_String();
     if (!srcMenu.GetItem(i, true, item))
       break;
-    CopyPopMenu_IfRequired(item);
-    if (destMenu.InsertItem(startPos, true, item))
+    if (CopyAndInsertMenuItem(destMenu, startPos, item))
       startPos++;
   }
 }
@@ -350,10 +368,17 @@ void MyLoadMenu(bool needResetMenu)
   if (needResetMenu)
   {
     const HMENU oldMenu = ::GetMenu(hWnd);
-    const HMENU newMenu = ::LoadMenu(g_hInstance, MAKEINTRESOURCE(IDM_MENU));
+    CMenu newMenuOwner;
+    CMenuDestroyer menuDestroyer(newMenuOwner);
+    newMenuOwner.Attach(::LoadMenu(g_hInstance, MAKEINTRESOURCE(IDM_MENU)));
+    const HMENU newMenu = newMenuOwner;
     // docs for SetMenu(): the window is redrawn to reflect the menu change.
     if (newMenu && ::SetMenu(hWnd, newMenu))
+    {
+      newMenuOwner.Detach();
+      menuDestroyer.Disable();
       ::DestroyMenu(oldMenu);
+    }
     menuWasChanged = true;
   }
   const HMENU baseMenu = ::GetMenu(hWnd);
@@ -535,8 +560,17 @@ void OnMenuActivating(HWND /* hWnd */, HMENU hMenu, int position)
       const int kFirstPartSize = kMaxSize / 2;
       if (s.Len() > kMaxSize)
       {
-        s.Delete(kFirstPartSize, s.Len() - kMaxSize);
-        s.Insert(kFirstPartSize, L" ... ");
+        unsigned head = kFirstPartSize;
+        unsigned tail = s.Len() - kFirstPartSize;
+        // Keep UTF-16 surrogate pairs together at both abbreviation boundaries.
+        if (s[head - 1] >= 0xd800 && s[head - 1] <= 0xdbff &&
+            s[head] >= 0xdc00 && s[head] <= 0xdfff)
+          --head;
+        if (s[tail - 1] >= 0xd800 && s[tail - 1] <= 0xdbff &&
+            s[tail] >= 0xdc00 && s[tail] <= 0xdfff)
+          ++tail;
+        s.Delete(head, tail - head);
+        s.Insert(head, L" ... ");
       }
       if (s.IsEmpty())
         s = '-';
@@ -681,8 +715,7 @@ void CFileMenu::Load(HMENU hMenu, unsigned startPos)
       if (!isBigScreen && (disable || item.IsSeparator()))
         continue;
 
-      CopyPopMenu_IfRequired(item);
-      if (destMenu.InsertItem(startPos, true, item))
+      if (CopyAndInsertMenuItem(destMenu, startPos, item))
       {
         if (disable)
           destMenu.EnableItem(startPos, MF_BYPOSITION | MF_GRAYED);

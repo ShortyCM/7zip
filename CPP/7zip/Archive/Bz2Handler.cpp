@@ -168,6 +168,81 @@ Z7_COM7F_IMF(CHandler::Close())
 }
 
 
+Z7_CLASS_IMP_NOQIB_1(
+  CInStreamWithReadResult
+  , ISequentialInStream
+)
+public:
+  CMyComPtr<ISequentialInStream> Stream;
+  HRESULT Result;
+
+  CInStreamWithReadResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CInStreamWithReadResult::Read(void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (size == 0)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return S_OK;
+  }
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  return Result = Stream->Read(data, size, processedSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  CProgressWithResult
+  , ICompressProgressInfo
+)
+public:
+  CMyComPtr<ICompressProgressInfo> Progress;
+  HRESULT Result;
+
+  CProgressWithResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(CProgressWithResult::SetRatioInfo(const UInt64 *inSize, const UInt64 *outSize))
+{
+  if (Result != S_OK)
+    return Result;
+  return Result = Progress->SetRatioInfo(inSize, outSize);
+}
+
+
+Z7_CLASS_IMP_NOQIB_1(
+  COutStreamWithWriteResult
+  , ISequentialOutStream
+)
+public:
+  CMyComPtr<ISequentialOutStream> Stream;
+  HRESULT Result;
+
+  COutStreamWithWriteResult(): Result(S_OK) {}
+};
+
+Z7_COM7F_IMF(COutStreamWithWriteResult::Write(const void *data, UInt32 size, UInt32 *processedSize))
+{
+  if (Result != S_OK)
+  {
+    if (processedSize)
+      *processedSize = 0;
+    return Result;
+  }
+  if (Stream)
+    return Result = Stream->Write(data, size, processedSize);
+  if (processedSize)
+    *processedSize = size;
+  return S_OK;
+}
+
+
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback))
 {
@@ -211,13 +286,19 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   RINOK(decoder->SetNumberOfThreads(_props._numThreads))
   #endif
 
+  CMyComPtr2_Create<ISequentialOutStream, COutStreamWithWriteResult> outCallbackStream;
+  outCallbackStream->Stream = realOutStream;
   CMyComPtr2_Create<ISequentialOutStream, CDummyOutStream> outStream;
-  outStream->SetStream(realOutStream);
+  outStream->SetStream(outCallbackStream);
   outStream->Init();
   // realOutStream.Release();
 
   CMyComPtr2_Create<ICompressProgressInfo, CLocalProgress> lps;
   lps->Init(extractCallback, true);
+  CMyComPtr2_Create<ICompressProgressInfo, CProgressWithResult> decoderProgress;
+  decoderProgress->Progress = lps;
+  CMyComPtr2_Create<ISequentialInStream, CInStreamWithReadResult> inputCallbackStream;
+  inputCallbackStream->Stream = _seqStream;
 
   decoder->FinishMode = true;
   decoder->Base.DecodeAllStreams = true;
@@ -225,7 +306,10 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   _dataAfterEnd = false;
   _needMoreInput = false;
 
-  HRESULT result = decoder.Interface()->Code(_seqStream, outStream, NULL, NULL, lps);
+  HRESULT result = decoder.Interface()->Code(inputCallbackStream, outStream, NULL, NULL, decoderProgress);
+  RINOK(outCallbackStream->Result)
+  RINOK(decoderProgress->Result)
+  RINOK(inputCallbackStream->Result)
   
   if (result != S_FALSE && result != S_OK)
     return result;
@@ -260,8 +344,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     _numStreams_Defined = true;
     _numBlocks_Defined = true;
 
-    // RINOK(
-    lps.Interface()->SetRatioInfo(&packSize, &_unpackSize);
+    RINOK(lps.Interface()->SetRatioInfo(&packSize, &_unpackSize))
   }
   
   // outStream.Release();
@@ -466,7 +549,9 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   return _props.SetProperties(names, values, numProps);
+  COM_TRY_END
 }
 
 static const Byte k_Signature[] = { 'B', 'Z', 'h' };

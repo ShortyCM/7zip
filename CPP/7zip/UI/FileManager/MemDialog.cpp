@@ -12,6 +12,7 @@
 
 #include "../Explorer/MyMessages.h"
 #include "../GUI/ExtractRes.h"
+#include "../Common/ZipRegistry.h"
 
 #include "resourceGui.h"
 
@@ -213,6 +214,12 @@ void CMemDialog::OnContinue()
       return;
     }
     Limit_GB = val;
+    const LONG result = NExtract::Save_LimitGB(val);
+    if (result != ERROR_SUCCESS)
+    {
+      ShowErrorMessage(*this, NWindows::NError::MyFormatMessage((DWORD)result));
+      return;
+    }
   }
   CModalDialog::OnContinue();
 }

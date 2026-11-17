@@ -49,22 +49,24 @@ wchar_t * ConvertUInt64ToString(UInt64 val, wchar_t *s) throw()
 
 void ConvertInt64ToString(Int64 val, char *s) throw()
 {
+  UInt64 magnitude = (UInt64)val;
   if (val < 0)
   {
     *s++ = '-';
-    val = -val;
+    magnitude = 0 - magnitude;
   }
-  ConvertUInt64ToString((UInt64)val, s);
+  ConvertUInt64ToString(magnitude, s);
 }
 
 void ConvertInt64ToString(Int64 val, wchar_t *s) throw()
 {
+  UInt64 magnitude = (UInt64)val;
   if (val < 0)
   {
     *s++ = L'-';
-    val = -val;
+    magnitude = 0 - magnitude;
   }
-  ConvertUInt64ToString((UInt64)val, s);
+  ConvertUInt64ToString(magnitude, s);
 }
 
 

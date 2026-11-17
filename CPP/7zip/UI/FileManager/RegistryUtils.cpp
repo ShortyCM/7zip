@@ -40,11 +40,11 @@ static LPCTSTR const kLargePages = TEXT("LargePages");
 static LPCTSTR const kFlatViewName = TEXT("FlatViewArc");
 // static LPCTSTR const kShowDeletedFiles = TEXT("ShowDeleted");
 
-static void SaveCuString(LPCTSTR keyPath, LPCWSTR valuePath, LPCWSTR value)
+static LONG SaveCuString(LPCTSTR keyPath, LPCWSTR valuePath, LPCWSTR value)
 {
   CKey key;
-  key.Create(HKEY_CURRENT_USER, keyPath);
-  key.SetValue(valuePath, value);
+  RINOK(key.Create(HKEY_CURRENT_USER, keyPath))
+  return key.SetValue(valuePath, value);
 }
 
 static void ReadCuString(LPCTSTR keyPath, LPCWSTR valuePath, UString &res)
@@ -55,29 +55,29 @@ static void ReadCuString(LPCTSTR keyPath, LPCWSTR valuePath, UString &res)
     key.QueryValue(valuePath, res);
 }
 
-void SaveRegLang(const UString &path) { SaveCuString(kCUBasePath, kLangValueName, path); }
+LONG SaveRegLang(const UString &path) { return SaveCuString(kCUBasePath, kLangValueName, path); }
 void ReadRegLang(UString &path) { ReadCuString(kCUBasePath, kLangValueName, path); }
 
-void SaveRegEditor(bool useEditor, const UString &path) { SaveCuString(kCU_FMPath, useEditor ? kEditor : kViewer, path); }
+LONG SaveRegEditor(bool useEditor, const UString &path) { return SaveCuString(kCU_FMPath, useEditor ? kEditor : kViewer, path); }
 void ReadRegEditor(bool useEditor, UString &path) { ReadCuString(kCU_FMPath, useEditor ? kEditor : kViewer, path); }
 
-void SaveRegDiff(const UString &path) { SaveCuString(kCU_FMPath, kDiff, path); }
+LONG SaveRegDiff(const UString &path) { return SaveCuString(kCU_FMPath, kDiff, path); }
 void ReadRegDiff(UString &path) { ReadCuString(kCU_FMPath, kDiff, path); }
 
 void ReadReg_VerCtrlPath(UString &path) { ReadCuString(kCU_FMPath, kVerCtrlPath, path); }
 
-static void Save7ZipOption(LPCTSTR value, bool enabled)
+static LONG Save7ZipOption(LPCTSTR value, bool enabled)
 {
   CKey key;
-  key.Create(HKEY_CURRENT_USER, kCUBasePath);
-  key.SetValue(value, enabled);
+  RINOK(key.Create(HKEY_CURRENT_USER, kCUBasePath))
+  return key.SetValue(value, enabled);
 }
 
-static void SaveOption(LPCTSTR value, bool enabled)
+static LONG SaveOption(LPCTSTR value, bool enabled)
 {
   CKey key;
-  key.Create(HKEY_CURRENT_USER, kCU_FMPath);
-  key.SetValue(value, enabled);
+  RINOK(key.Create(HKEY_CURRENT_USER, kCU_FMPath))
+  return key.SetValue(value, enabled);
 }
 
 static bool Read7ZipOption(LPCTSTR value, bool defaultValue)
@@ -118,17 +118,17 @@ static bool ReadLmOption(LPCTSTR value, bool defaultValue)
 }
 */
 
-void CFmSettings::Save() const
+LONG CFmSettings::Save() const
 {
-  SaveOption(kShowDots, ShowDots);
-  SaveOption(kShowRealFileIcons, ShowRealFileIcons);
-  SaveOption(kFullRow, FullRow);
-  SaveOption(kShowGrid, ShowGrid);
-  SaveOption(kSingleClick, SingleClick);
-  SaveOption(kAlternativeSelection, AlternativeSelection);
+  RINOK(SaveOption(kShowDots, ShowDots))
+  RINOK(SaveOption(kShowRealFileIcons, ShowRealFileIcons))
+  RINOK(SaveOption(kFullRow, FullRow))
+  RINOK(SaveOption(kShowGrid, ShowGrid))
+  RINOK(SaveOption(kSingleClick, SingleClick))
+  RINOK(SaveOption(kAlternativeSelection, AlternativeSelection))
   // SaveOption(kUnderline, Underline);
 
-  SaveOption(kShowSystemMenu, ShowSystemMenu);
+  return SaveOption(kShowSystemMenu, ShowSystemMenu);
 }
 
 void CFmSettings::Load()
@@ -167,7 +167,7 @@ void CFmSettings::Load()
 // void SaveLockMemoryAdd(bool enable) { SaveLmOption(kLockMemoryAdd, enable); }
 // bool ReadLockMemoryAdd() { return ReadLmOption(kLockMemoryAdd, true); }
 
-void SaveLockMemoryEnable(bool enable) { Save7ZipOption(kLargePages, enable); }
+LONG SaveLockMemoryEnable(bool enable) { return Save7ZipOption(kLargePages, enable); }
 bool ReadLockMemoryEnable() { return Read7ZipOption(kLargePages, false); }
 
 static CSysString GetFlatViewName(UInt32 panelIndex)

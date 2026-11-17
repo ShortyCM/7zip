@@ -15,6 +15,7 @@ Z7_CLASS_IMP_NOQIB_1(
 
   CMyComPtr<IOutStream> _stream;
   UInt64 _offset;
+  UInt64 _virtPos;
 public:
   HRESULT Init(IOutStream *stream, UInt64 offset);
 };

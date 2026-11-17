@@ -137,11 +137,8 @@ struct CByteIn
   CBitDecoder BitDecoder;
   HRESULT hresult;
 
-  void Init()
-  {
-    hresult = S_OK;
-    BitDecoder.Init();
-  }
+  CByteIn(): hresult(S_OK) {}
+  void Init() { hresult = S_OK; BitDecoder.Init(); }
 };
 
 
@@ -235,13 +232,13 @@ Z7_CLASS_IMP_NOQIB_2(
   UInt32 ReadBits(unsigned numBits);
 
   HRESULT InitPPM();
-  // int DecodePpmSymbol();
+  int DecodePpmSymbol();
   HRESULT DecodePPM(Int32 num, bool &keepDecompressing);
 
   HRESULT ReadTables(bool &keepDecompressing);
   HRESULT ReadEndOfBlock(bool &keepDecompressing);
   HRESULT DecodeLZ(bool &keepDecompressing);
-  HRESULT CodeReal(ICompressProgressInfo *progress);
+  HRESULT CodeReal(ICompressProgressInfo *progress, bool outSizeDefined);
   
   bool InputEofError() const { return m_InBitStream.BitDecoder.ExtraBitsWereRead(); }
   bool InputEofError_Fast() const { return (m_InBitStream.BitDecoder.Stream.NumExtraBytes > 2); }

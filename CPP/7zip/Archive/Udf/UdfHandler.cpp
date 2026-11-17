@@ -260,6 +260,7 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
 
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
+  COM_TRY_BEGIN
   *stream = NULL;
 
   const CRef2 &ref2 = _refs2[index];
@@ -316,6 +317,7 @@ Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
   extentStreamSpec->Init();
   *stream = extentStream.Detach();
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
@@ -347,7 +349,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
   lps->Init(extractCallback, false);
 
   UInt64 currentTotalSize = 0;
-  
+
   for (i = 0;; i++)
   {
     CLocalProgress *lps2 = lps.ClsPtr();
@@ -363,12 +365,12 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
           NExtract::NAskMode::kExtract;
       const UInt32 index = allFilesMode ? i : indices[i];
       RINOK(extractCallback->GetStream(index, &realOutStream, askMode))
-            
+
       const CRef2 &ref2 = _refs2[index];
       const CRef &ref = _archive.LogVols[ref2.Vol].FileSets[ref2.Fs].Refs[ref2.Ref];
       const CFile &file = _archive.Files[ref.FileIndex];
       const CItem &item = _archive.Items[file.ItemIndex];
-      
+
       if (item.IsDir())
       {
         RINOK(extractCallback->PrepareOperation(askMode))
@@ -383,10 +385,11 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       const HRESULT res = GetStream(index, &udfInStream);
       if (res == E_NOTIMPL)
         opRes = NExtract::NOperationResult::kUnsupportedMethod;
-      else if (res != S_OK)
+      else if (res == S_FALSE)
         opRes = NExtract::NOperationResult::kDataError;
       else
       {
+        RINOK(res)
         RINOK(copyCoder.Code(udfInStream, realOutStream, &item.Size, lps))
         opRes = copyCoder.TotalSize == item.Size ?
             NExtract::NOperationResult::kOK:

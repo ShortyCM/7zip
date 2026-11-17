@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include "../../../Common/ComTry.h"
+
 #include "../../../Windows/PropVariant.h"
 
 #include "../../PropID.h"
@@ -88,6 +90,7 @@ void CNetFolder::Init(const NWindows::NNet::CResourceW *netResource,
 
 Z7_COM7F_IMF(CNetFolder::LoadItems())
 {
+  COM_TRY_BEGIN
   _items.Clear();
   CEnum enumerator;
 
@@ -157,6 +160,7 @@ Z7_COM7F_IMF(CNetFolder::LoadItems())
   }
   */
   return S_OK;
+  COM_TRY_END
 }
 
 
@@ -168,6 +172,7 @@ Z7_COM7F_IMF(CNetFolder::GetNumberOfItems(UInt32 *numItems))
 
 Z7_COM7F_IMF(CNetFolder::GetProperty(UInt32 itemIndex, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NCOM::CPropVariant prop;
   const CResourceEx &item = _items[itemIndex];
   switch (propID)
@@ -183,13 +188,15 @@ Z7_COM7F_IMF(CNetFolder::GetProperty(UInt32 itemIndex, PROPID propID, PROPVARIAN
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CNetFolder::BindToFolder(UInt32 index, IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   const CResourceEx &resource = _items[index];
-  if (resource.Usage == RESOURCEUSAGE_CONNECTABLE ||
+  if ((resource.Usage & RESOURCEUSAGE_CONNECTABLE) != 0 ||
       resource.DisplayType == RESOURCEDISPLAYTYPE_SHARE)
   {
     NFsFolder::CFSFolder *fsFolderSpec = new NFsFolder::CFSFolder;
@@ -205,6 +212,7 @@ Z7_COM7F_IMF(CNetFolder::BindToFolder(UInt32 index, IFolderFolder **resultFolder
     *resultFolder = subFolder.Detach();
   }
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CNetFolder::BindToFolder(const wchar_t * /* name */, IFolderFolder ** /* resultFolder */))
@@ -214,6 +222,7 @@ Z7_COM7F_IMF(CNetFolder::BindToFolder(const wchar_t * /* name */, IFolderFolder 
 
 Z7_COM7F_IMF(CNetFolder::BindToParentFolder(IFolderFolder **resultFolder))
 {
+  COM_TRY_BEGIN
   *resultFolder = NULL;
   if (_parentFolder)
   {
@@ -236,12 +245,14 @@ Z7_COM7F_IMF(CNetFolder::BindToParentFolder(IFolderFolder **resultFolder))
     *resultFolder = subFolder.Detach();
   }
   return S_OK;
+  COM_TRY_END
 }
 
 IMP_IFolderFolder_Props(CNetFolder)
 
 Z7_COM7F_IMF(CNetFolder::GetFolderProperty(PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NWindows::NCOM::CPropVariant prop;
   switch (propID)
   {
@@ -250,6 +261,7 @@ Z7_COM7F_IMF(CNetFolder::GetFolderProperty(PROPID propID, PROPVARIANT *value))
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(CNetFolder::GetSystemIconIndex(UInt32 index, Int32 *iconIndex))
@@ -259,7 +271,7 @@ Z7_COM7F_IMF(CNetFolder::GetSystemIconIndex(UInt32 index, Int32 *iconIndex))
     return E_INVALIDARG;
   const CResourceW &resource = _items[index];
   if (resource.DisplayType == RESOURCEDISPLAYTYPE_SERVER ||
-      resource.Usage == RESOURCEUSAGE_CONNECTABLE)
+      (resource.Usage & RESOURCEUSAGE_CONNECTABLE) != 0)
   {
     return Shell_GetFileInfo_SysIconIndex_for_Path_return_HRESULT(
         us2fs(resource.RemoteName), FILE_ATTRIBUTE_DIRECTORY, iconIndex);

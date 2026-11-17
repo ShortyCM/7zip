@@ -47,7 +47,9 @@ namespace NNet {
 
 DWORD CEnum::Open(DWORD scope, DWORD type, DWORD usage, LPNETRESOURCE netResource)
 {
-  Close();
+  const DWORD closeResult = Close();
+  if (closeResult != NO_ERROR)
+    return closeResult;
   const DWORD result = ::WNetOpenEnum(scope, type, usage, netResource, &_handle);
   _handleAllocated = (result == NO_ERROR);
   return result;
@@ -56,7 +58,9 @@ DWORD CEnum::Open(DWORD scope, DWORD type, DWORD usage, LPNETRESOURCE netResourc
 #ifndef _UNICODE
 DWORD CEnum::Open(DWORD scope, DWORD type, DWORD usage, LPNETRESOURCEW netResource)
 {
-  Close();
+  const DWORD closeResult = Close();
+  if (closeResult != NO_ERROR)
+    return closeResult;
   const DWORD result = ::WNetOpenEnumW(scope, type, usage, netResource, &_handle);
   _handleAllocated = (result == NO_ERROR);
   return result;
@@ -226,33 +230,17 @@ DWORD CEnum::NextW(LPDWORD lpcCount, LPVOID lpBuffer, LPDWORD lpBufferSize)
 
 DWORD CEnum::Next(CResource &resource)
 {
-  const DWORD kBufferSize = 16384;
-  CByteArr byteBuffer(kBufferSize);
-  LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
-  ZeroMemory(lpnrLocal, kBufferSize);
-  DWORD bufferSize = kBufferSize;
-  DWORD numEntries = 1;
-  const DWORD result = Next(&numEntries, lpnrLocal, &bufferSize);
-  if (result != NO_ERROR)
-    return result;
-  if (numEntries != 1)
-    return (DWORD)E_FAIL;
-  ConvertNETRESOURCEToCResource(lpnrLocal[0], resource);
-  return result;
-}
-
-#ifndef _UNICODE
-DWORD CEnum::Next(CResourceW &resource)
-{
-  if (g_IsNT)
+  DWORD bufferSize = 16384;
+  for (;;)
   {
-    const DWORD kBufferSize = 16384;
-    CByteArr byteBuffer(kBufferSize);
-    LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
-    ZeroMemory(lpnrLocal, kBufferSize);
-    DWORD bufferSize = kBufferSize;
+    const DWORD allocatedSize = bufferSize;
+    CByteArr byteBuffer(allocatedSize);
+    LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
+    ZeroMemory(lpnrLocal, allocatedSize);
     DWORD numEntries = 1;
-    const DWORD result = NextW(&numEntries, lpnrLocal, &bufferSize);
+    const DWORD result = Next(&numEntries, lpnrLocal, &bufferSize);
+    if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+      continue;
     if (result != NO_ERROR)
       return result;
     if (numEntries != 1)
@@ -260,8 +248,36 @@ DWORD CEnum::Next(CResourceW &resource)
     ConvertNETRESOURCEToCResource(lpnrLocal[0], resource);
     return result;
   }
+}
+
+#ifndef _UNICODE
+DWORD CEnum::Next(CResourceW &resource)
+{
+  if (g_IsNT)
+  {
+    DWORD bufferSize = 16384;
+    for (;;)
+    {
+      const DWORD allocatedSize = bufferSize;
+      CByteArr byteBuffer(allocatedSize);
+      LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
+      ZeroMemory(lpnrLocal, allocatedSize);
+      DWORD numEntries = 1;
+      const DWORD result = NextW(&numEntries, lpnrLocal, &bufferSize);
+      if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+        continue;
+      if (result != NO_ERROR)
+        return result;
+      if (numEntries != 1)
+        return (DWORD)E_FAIL;
+      ConvertNETRESOURCEToCResource(lpnrLocal[0], resource);
+      return result;
+    }
+  }
   CResource resourceA;
   const DWORD result = Next(resourceA);
+  if (result != NO_ERROR)
+    return result;
   ConvertResourceToResourceW(resourceA, resource);
   return result;
 }
@@ -270,18 +286,23 @@ DWORD CEnum::Next(CResourceW &resource)
 
 DWORD GetResourceParent(const CResource &resource, CResource &parentResource)
 {
-  const DWORD kBufferSize = 16384;
-  CByteArr byteBuffer(kBufferSize);
-  LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
-  ZeroMemory(lpnrLocal, kBufferSize);
-  DWORD bufferSize = kBufferSize;
-  NETRESOURCE netResource;
-  ConvertCResourceToNETRESOURCE(resource, netResource);
-  const DWORD result = ::WNetGetResourceParent(&netResource, lpnrLocal, &bufferSize);
-  if (result != NO_ERROR)
+  DWORD bufferSize = 16384;
+  for (;;)
+  {
+    const DWORD allocatedSize = bufferSize;
+    CByteArr byteBuffer(allocatedSize);
+    LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
+    ZeroMemory(lpnrLocal, allocatedSize);
+    NETRESOURCE netResource;
+    ConvertCResourceToNETRESOURCE(resource, netResource);
+    const DWORD result = ::WNetGetResourceParent(&netResource, lpnrLocal, &bufferSize);
+    if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+      continue;
+    if (result != NO_ERROR)
+      return result;
+    ConvertNETRESOURCEToCResource(lpnrLocal[0], parentResource);
     return result;
-  ConvertNETRESOURCEToCResource(lpnrLocal[0], parentResource);
-  return result;
+  }
 }
 
 #ifndef _UNICODE
@@ -289,22 +310,29 @@ DWORD GetResourceParent(const CResourceW &resource, CResourceW &parentResource)
 {
   if (g_IsNT)
   {
-    const DWORD kBufferSize = 16384;
-    CByteArr byteBuffer(kBufferSize);
-    LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
-    ZeroMemory(lpnrLocal, kBufferSize);
-    DWORD bufferSize = kBufferSize;
-    NETRESOURCEW netResource;
-    ConvertCResourceToNETRESOURCE(resource, netResource);
-    const DWORD result = ::WNetGetResourceParentW(&netResource, lpnrLocal, &bufferSize);
-    if (result != NO_ERROR)
+    DWORD bufferSize = 16384;
+    for (;;)
+    {
+      const DWORD allocatedSize = bufferSize;
+      CByteArr byteBuffer(allocatedSize);
+      LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
+      ZeroMemory(lpnrLocal, allocatedSize);
+      NETRESOURCEW netResource;
+      ConvertCResourceToNETRESOURCE(resource, netResource);
+      const DWORD result = ::WNetGetResourceParentW(&netResource, lpnrLocal, &bufferSize);
+      if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+        continue;
+      if (result != NO_ERROR)
+        return result;
+      ConvertNETRESOURCEToCResource(lpnrLocal[0], parentResource);
       return result;
-    ConvertNETRESOURCEToCResource(lpnrLocal[0], parentResource);
-    return result;
+    }
   }
   CResource resourceA, parentResourceA;
   ConvertResourceWToResource(resource, resourceA);
   const DWORD result = GetResourceParent(resourceA, parentResourceA);
+  if (result != NO_ERROR)
+    return result;
   ConvertResourceToResourceW(parentResourceA, parentResource);
   return result;
 }
@@ -313,22 +341,27 @@ DWORD GetResourceParent(const CResourceW &resource, CResourceW &parentResource)
 DWORD GetResourceInformation(const CResource &resource,
     CResource &destResource, CSysString &systemPathPart)
 {
-  const DWORD kBufferSize = 16384;
-  CByteArr byteBuffer(kBufferSize);
-  LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
-  ZeroMemory(lpnrLocal, kBufferSize);
-  DWORD bufferSize = kBufferSize;
-  NETRESOURCE netResource;
-  ConvertCResourceToNETRESOURCE(resource, netResource);
-  LPTSTR lplpSystem;
-  const DWORD result = ::WNetGetResourceInformation(&netResource,
-      lpnrLocal, &bufferSize, &lplpSystem);
-  if (result != NO_ERROR)
+  DWORD bufferSize = 16384;
+  for (;;)
+  {
+    const DWORD allocatedSize = bufferSize;
+    CByteArr byteBuffer(allocatedSize);
+    LPNETRESOURCE lpnrLocal = (LPNETRESOURCE) (void *) (BYTE *)(byteBuffer);
+    ZeroMemory(lpnrLocal, allocatedSize);
+    NETRESOURCE netResource;
+    ConvertCResourceToNETRESOURCE(resource, netResource);
+    LPTSTR lplpSystem;
+    const DWORD result = ::WNetGetResourceInformation(&netResource,
+        lpnrLocal, &bufferSize, &lplpSystem);
+    if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+      continue;
+    if (result != NO_ERROR)
+      return result;
+    if (lplpSystem != NULL)
+      systemPathPart = lplpSystem;
+    ConvertNETRESOURCEToCResource(lpnrLocal[0], destResource);
     return result;
-  if (lplpSystem != NULL)
-    systemPathPart = lplpSystem;
-  ConvertNETRESOURCEToCResource(lpnrLocal[0], destResource);
-  return result;
+  }
 }
 
 #ifndef _UNICODE
@@ -337,27 +370,34 @@ DWORD GetResourceInformation(const CResourceW &resource,
 {
   if (g_IsNT)
   {
-    const DWORD kBufferSize = 16384;
-    CByteArr byteBuffer(kBufferSize);
-    LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
-    ZeroMemory(lpnrLocal, kBufferSize);
-    DWORD bufferSize = kBufferSize;
-    NETRESOURCEW netResource;
-    ConvertCResourceToNETRESOURCE(resource, netResource);
-    LPWSTR lplpSystem;
-    const DWORD result = ::WNetGetResourceInformationW(&netResource,
-      lpnrLocal, &bufferSize, &lplpSystem);
-    if (result != NO_ERROR)
+    DWORD bufferSize = 16384;
+    for (;;)
+    {
+      const DWORD allocatedSize = bufferSize;
+      CByteArr byteBuffer(allocatedSize);
+      LPNETRESOURCEW lpnrLocal = (LPNETRESOURCEW) (void *) (BYTE *)(byteBuffer);
+      ZeroMemory(lpnrLocal, allocatedSize);
+      NETRESOURCEW netResource;
+      ConvertCResourceToNETRESOURCE(resource, netResource);
+      LPWSTR lplpSystem;
+      const DWORD result = ::WNetGetResourceInformationW(&netResource,
+        lpnrLocal, &bufferSize, &lplpSystem);
+      if (result == ERROR_MORE_DATA && bufferSize > allocatedSize)
+        continue;
+      if (result != NO_ERROR)
+        return result;
+      if (lplpSystem != 0)
+        systemPathPart = lplpSystem;
+      ConvertNETRESOURCEToCResource(lpnrLocal[0], destResource);
       return result;
-    if (lplpSystem != 0)
-      systemPathPart = lplpSystem;
-    ConvertNETRESOURCEToCResource(lpnrLocal[0], destResource);
-    return result;
+    }
   }
   CResource resourceA, destResourceA;
   ConvertResourceWToResource(resource, resourceA);
   AString systemPathPartA;
   const DWORD result = GetResourceInformation(resourceA, destResourceA, systemPathPartA);
+  if (result != NO_ERROR)
+    return result;
   ConvertResourceToResourceW(destResourceA, destResource);
   systemPathPart = GetUnicodeString(systemPathPartA);
   return result;
@@ -386,8 +426,12 @@ DWORD AddConnection2(const CResourceW &resource, LPCWSTR password, LPCWSTR userN
   }
   CResource resourceA;
   ConvertResourceWToResource(resource, resourceA);
-  const CSysString passwordA (GetSystemString(password));
-  const CSysString userNameA (GetSystemString(userName));
+  CSysString passwordA;
+  if (password)
+    passwordA = GetSystemString(password);
+  CSysString userNameA;
+  if (userName)
+    userNameA = GetSystemString(userName);
   return AddConnection2(resourceA,
     password ? (LPCTSTR)passwordA: 0,
     userName ? (LPCTSTR)userNameA: 0,

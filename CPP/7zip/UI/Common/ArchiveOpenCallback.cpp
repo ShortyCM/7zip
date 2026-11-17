@@ -47,10 +47,12 @@ HRESULT COpenCallbackImp::Init2(const FString &folderPrefix, const FString &file
 
 Z7_COM7F_IMF(COpenCallbackImp::SetSubArchiveName(const wchar_t *name))
 {
-  _subArchiveMode = true;
+  COM_TRY_BEGIN
   _subArchiveName = name;
+  _subArchiveMode = true;
   // TotalSize = 0;
   return S_OK;
+  COM_TRY_END
 }
 
 Z7_COM7F_IMF(COpenCallbackImp::SetTotal(const UInt64 *files, const UInt64 *bytes))
@@ -237,7 +239,12 @@ HRESULT CMultiStreams::EnsureOpen(unsigned index)
     // s.IsOpen = true;
     if (s.LocalPos != 0)
     {
-      RINOK(s.Stream->Seek((Int64)s.LocalPos, STREAM_SEEK_SET, &s.LocalPos))
+      const HRESULT res = s.Stream->Seek((Int64)s.LocalPos, STREAM_SEEK_SET, NULL);
+      if (res != S_OK)
+      {
+        CloseFile(index);
+        return res;
+      }
     }
    #ifdef DEBUG_VOLUMES
     static int numOpens = 0;
@@ -347,20 +354,36 @@ Z7_COM7F_IMF(COpenCallbackImp::GetStream(const wchar_t *name, IInStream **inStre
     // s.IsOpen = true;
   }
 
-  const unsigned fileIndex = Volumes.Streams.Add(s);
-  Volumes.InsertToList(fileIndex);
+  const unsigned fileIndex = Volumes.Streams.Size();
+  try
+  {
+    Volumes.Streams.Add(s);
+    Volumes.InsertToList(fileIndex);
 
-  FileSizes.Add(_fileInfo.Size);
-  FileNames.Add(name2);
-  FileNames_WasUsed.Add(true);
+    FileSizes.Add(_fileInfo.Size);
+    FileNames.Add(name2);
+    FileNames_WasUsed.Add(true);
 
-  CInFileStreamVol *inFile = new CInFileStreamVol;
-  CMyComPtr<IInStream> inStreamTemp = inFile;
-  inFile->FileIndex = fileIndex;
-  inFile->OpenCallbackImp = this;
-  inFile->OpenCallbackRef = this;
-  // TotalSize += _fileInfo.Size;
-  *inStream = inStreamTemp.Detach();
+    CInFileStreamVol *inFile = new CInFileStreamVol;
+    CMyComPtr<IInStream> inStreamTemp = inFile;
+    inFile->FileIndex = fileIndex;
+    inFile->OpenCallbackImp = this;
+    inFile->OpenCallbackRef = this;
+    // TotalSize += _fileInfo.Size;
+    *inStream = inStreamTemp.Detach();
+  }
+  catch (...)
+  {
+    if (Volumes.Streams.Size() != fileIndex)
+    {
+      Volumes.CloseFile(fileIndex);
+      Volumes.Streams.DeleteBack();
+    }
+    FileSizes.DeleteFrom(fileIndex);
+    FileNames.DeleteFrom(fileIndex);
+    FileNames_WasUsed.DeleteFrom(fileIndex);
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
   COM_TRY_END
 }

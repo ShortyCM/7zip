@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <functional>
+
 #ifndef _WIN32
 #include <limits.h>
 #include <unistd.h>
@@ -20,6 +22,13 @@ namespace NFile {
 namespace NName {
 
 #define IS_SEPAR(c) IS_PATH_SEPAR(c)
+
+static bool DoesPathAliasString(CFSTR path, const FString &s)
+{
+  const CFSTR start = s;
+  const std::less<CFSTR> less;
+  return path && !less(path, start) && !less(start + s.Len(), path);
+}
 
 int FindSepar(const wchar_t *s) throw()
 {
@@ -174,7 +183,7 @@ bool IsDevicePath(CFSTR s) throw()
   const unsigned len = MyStringLen(s);
   if (len == 6 && s[5] == ':')
     return true;
-  if (len < 18 || len > 22 || !IsString1PrefixedByString2(s + kDevicePathPrefixSize, "PhysicalDrive"))
+  if (len < 18 || len > 22 || !IsString1PrefixedByString2_NoCase_Ascii(s + kDevicePathPrefixSize, "PhysicalDrive"))
     return false;
   for (unsigned i = 17; i < len; i++)
     if (s[i] < '0' || s[i] > '9')
@@ -209,7 +218,7 @@ unsigned GetNetworkServerPrefixSize(CFSTR s) throw()
       return 0;
   }
   const int pos = FindSepar(s + prefixSize);
-  if (pos < 0)
+  if (pos <= 0)
     return 0;
   return prefixSize + (unsigned)(pos + 1);
 }
@@ -220,6 +229,8 @@ bool IsNetworkShareRootPath(CFSTR s) throw()
   if (prefixSize == 0)
     return false;
   s += prefixSize;
+  if (s[0] == 0 || IS_SEPAR(s[0]))
+    return false;
   const int pos = FindSepar(s);
   if (pos < 0)
     return true;
@@ -314,10 +325,10 @@ static unsigned GetRootPrefixSize_Of_NetworkPath(CFSTR s)
 {
   // Network path: we look "server\path\" as root prefix
   const int pos = FindSepar(s);
-  if (pos < 0)
+  if (pos <= 0)
     return 0;
   const int pos2 = FindSepar(s + (unsigned)pos + 1);
-  if (pos2 < 0)
+  if (pos2 <= 0)
     return 0;
   return (unsigned)pos + (unsigned)pos2 + 2;
 }
@@ -365,10 +376,10 @@ static unsigned GetRootPrefixSize_Of_NetworkPath(const wchar_t *s) throw()
 {
   // Network path: we look "server\path\" as root prefix
   const int pos = FindSepar(s);
-  if (pos < 0)
+  if (pos <= 0)
     return 0;
   const int pos2 = FindSepar(s + (unsigned)pos + 1);
-  if (pos2 < 0)
+  if (pos2 <= 0)
     return 0;
   return (unsigned)(pos + pos2 + 2);
 }
@@ -771,6 +782,13 @@ static bool GetSuperPathBase(CFSTR s, UString &res)
 
 bool GetSuperPath(CFSTR path, UString &superPath, bool onlyIfNew)
 {
+  #ifdef USE_UNICODE_FSTRING
+  if (DoesPathAliasString(path, superPath))
+  {
+    const UString copy(path);
+    return GetSuperPath(copy, superPath, onlyIfNew);
+  }
+  #endif
   if (GetSuperPathBase(path, superPath))
   {
     if (superPath.IsEmpty())
@@ -791,17 +809,24 @@ bool GetSuperPath(CFSTR path, UString &superPath, bool onlyIfNew)
 
 bool GetSuperPaths(CFSTR s1, CFSTR s2, UString &d1, UString &d2, bool onlyIfNew)
 {
+  #ifdef USE_UNICODE_FSTRING
+  if (DoesPathAliasString(s1, d1) || DoesPathAliasString(s1, d2)
+      || DoesPathAliasString(s2, d1) || DoesPathAliasString(s2, d2))
+  {
+    const UString copy1(s1), copy2(s2);
+    return GetSuperPaths(copy1, copy2, d1, d2, onlyIfNew);
+  }
+  #endif
   if (!GetSuperPathBase(s1, d1) ||
       !GetSuperPathBase(s2, d2))
     return false;
  
-  NormalizeDirSeparators(d1);
-  NormalizeDirSeparators(d2);
-
   if (d1.IsEmpty() && d2.IsEmpty() && onlyIfNew)
     return false;
   if (d1.IsEmpty()) d1 = fs2us(s1);
   if (d2.IsEmpty()) d2 = fs2us(s2);
+  NormalizeDirSeparators(d1);
+  NormalizeDirSeparators(d2);
   return true;
 }
 
@@ -819,6 +844,15 @@ bool GetSuperPath(CFSTR path, UString &superPath)
 
 bool GetFullPath(CFSTR dirPrefix, CFSTR s, FString &res)
 {
+  const CFSTR start = res;
+  const bool prefixAliases = DoesPathAliasString(dirPrefix, res);
+  const bool pathAliases = DoesPathAliasString(s, res);
+  if (prefixAliases || pathAliases)
+  {
+    const FString copy(res);
+    return GetFullPath(prefixAliases ? copy.Ptr((unsigned)(dirPrefix - start)) : dirPrefix,
+        pathAliases ? copy.Ptr((unsigned)(s - start)) : s, res);
+  }
   res = s;
 
   #ifdef UNDER_CE

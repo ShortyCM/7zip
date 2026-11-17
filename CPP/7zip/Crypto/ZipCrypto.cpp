@@ -81,7 +81,7 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
 
 HRESULT CDecoder::ReadHeader(ISequentialInStream *inStream)
 {
-  return ReadStream_FAIL(inStream, _header, kHeaderSize);
+  return ReadStream_FALSE(inStream, _header, kHeaderSize);
 }
 
 void CDecoder::Init_BeforeDecode()

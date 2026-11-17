@@ -86,21 +86,22 @@ HRESULT CPanel::BindToPath(const UString &fullPath, const UString &arcFormat, CO
   CDisableTimerProcessing disableTimerProcessing(*this);
   CDisableNotify disableNotify(*this);
 
-  for (; !_parentFolders.IsEmpty(); CloseOneLevel())
+  while (!_parentFolders.IsEmpty())
   {
     // ---------- we try to use open archive ----------
 
     const CFolderLink &link = _parentFolders.Back();
     const UString &virtPath = link.VirtualPath;
-    if (!path.IsPrefixedBy(virtPath))
+    if (!path.IsPrefixedBy(virtPath)
+        || (path.Len() > virtPath.Len() && !IS_PATH_SEPAR(path[virtPath.Len()])))
+    {
+      RINOK(CloseOneLevel(true))
       continue;
+    }
     UString relatPath = path.Ptr(virtPath.Len());
     if (!relatPath.IsEmpty())
     {
-      if (!IS_PATH_SEPAR(relatPath[0]))
-        continue;
-      else
-        relatPath.Delete(0);
+      relatPath.Delete(0);
     }
     
     UString relatPath2 = relatPath;
@@ -118,8 +119,7 @@ HRESULT CPanel::BindToPath(const UString &fullPath, const UString &arcFormat, CO
         break;
       }
       CMyComPtr<IFolderFolder> newFolder;
-      if (_folder->BindToParentFolder(&newFolder) != S_OK)
-        throw 20140918;
+      RINOK(_folder->BindToParentFolder(&newFolder))
       if (!newFolder) // we exit from loop above if (relatPath.IsPrefixedBy(empty path for root folder)
         throw 20140918;
       SetNewFolder(newFolder);
@@ -953,7 +953,8 @@ void CPanel::OpenParentFolder()
   CDisableNotify disableNotify(*this);
   
   CMyComPtr<IFolderFolder> newFolder;
-  _folder->BindToParentFolder(&newFolder);
+  if (_folder->BindToParentFolder(&newFolder) != S_OK)
+    return;
 
   // newFolder.Release(); // for test
   
@@ -969,7 +970,8 @@ void CPanel::OpenParentFolder()
         parentFolderPrefix = link.ParentFolderPath;
         focusedName = link.RelPath;
       }
-      CloseOneLevel();
+      if (CloseOneLevel(true) != S_OK)
+        return;
       needSetFolder = (!_folder);
     }
     
@@ -996,8 +998,12 @@ void CPanel::OpenParentFolder()
 }
 
 
-void CPanel::CloseOneLevel()
+HRESULT CPanel::CloseOneLevel(bool allowCancel)
 {
+  const int answer = ConfirmCloseArchiveFolder(allowCancel);
+  if (answer != IDYES && answer != IDNO)
+    return E_ABORT;
+
   ReleaseFolder();
   _library.Free();
   {
@@ -1007,26 +1013,38 @@ void CPanel::CloseOneLevel()
     _library.Attach(link.Library.Detach());
   }
   if (_parentFolders.Size() > 1)
-    OpenParentArchiveFolder();
+    OpenParentArchiveFolder(answer == IDYES);
   _parentFolders.DeleteBack();
   if (_parentFolders.IsEmpty())
     _flatMode = _flatModeForDisk;
+  return S_OK;
 }
 
-void CPanel::CloseOpenFolders()
+HRESULT CPanel::CloseOpenFolders(bool allowCancel)
 {
+  const unsigned numLevels = _parentFolders.Size();
   while (!_parentFolders.IsEmpty())
-    CloseOneLevel();
+  {
+    const HRESULT res = CloseOneLevel(allowCancel);
+    if (res != S_OK)
+    {
+      if (allowCancel && _parentFolders.Size() != numLevels)
+        RefreshListCtrl();
+      return res;
+    }
+  }
   _flatMode = _flatModeForDisk;
   ReleaseFolder();
   _library.Free();
+  return S_OK;
 }
 
 void CPanel::OpenRootFolder()
 {
   CDisableTimerProcessing disableTimerProcessing(*this);
   CDisableNotify disableNotify(*this);
-  _parentFolders.Clear();
+  if (CloseOpenFolders(true) != S_OK)
+    return;
   SetToRootFolder();
   RefreshListCtrl();
   // ::SetCurrentDirectory(::_currentFolderPrefix);
@@ -1042,7 +1060,8 @@ void CPanel::OpenRootFolder()
 
 void CPanel::OpenDrivesFolder()
 {
-  CloseOpenFolders();
+  if (CloseOpenFolders(true) != S_OK)
+    return;
   #ifdef UNDER_CE
   NFsFolder::CFSFolder *folderSpec = new NFsFolder::CFSFolder;
   SetNewFolder(folderSpec);

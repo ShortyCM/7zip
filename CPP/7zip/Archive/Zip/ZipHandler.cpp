@@ -1508,10 +1508,13 @@ HRESULT CZipDecoder::Decode(
     const UInt64 packSize = inStream->GetSize();
     bool thereAreData = false;
     // read to the end from filter or from packed stream
-    if (SkipStreamData(readFromFilter ?
+    const HRESULT skipRes = SkipStreamData(readFromFilter ?
           filterStream.Interface() :
           inStream.Interface(),
-        compressProgress, packSize, unpackSize, thereAreData) != S_OK)
+        compressProgress, packSize, unpackSize, thereAreData);
+    if (skipRes != S_OK && skipRes != S_FALSE)
+      return skipRes;
+    if (skipRes != S_OK)
       authOk = false;
     if (needReminderCheck && thereAreData)
       dataAfterEnd = true;
@@ -1521,7 +1524,10 @@ HRESULT CZipDecoder::Decode(
     else
     {
       inStream->Init(NCrypto::NWzAes::kMacSize);
-      if (_wzAesDecoder->CheckMac(inStream, authOk) != S_OK)
+      const HRESULT macRes = _wzAesDecoder->CheckMac(inStream, authOk);
+      if (macRes != S_OK && macRes != S_FALSE)
+        return macRes;
+      if (macRes != S_OK)
         authOk = false;
     }
   }

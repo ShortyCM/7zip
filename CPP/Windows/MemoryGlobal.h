@@ -17,6 +17,8 @@ public:
   operator HGLOBAL() const { return _global; }
   void Attach(HGLOBAL hGlobal)
   {
+    if (_global == hGlobal)
+      return;
     Free();
     _global = hGlobal;
   }

@@ -51,7 +51,8 @@ Z7_COM7F_IMF(CInStreamWithCRC::Seek(Int64 offset, UInt32 seekOrigin, UInt64 *new
 {
   if (seekOrigin != STREAM_SEEK_SET || offset != 0)
     return E_FAIL;
+  RINOK(_stream->Seek(offset, seekOrigin, newPosition))
   _size = 0;
   _crc = CRC_INIT_VAL;
-  return _stream->Seek(offset, seekOrigin, newPosition);
+  return S_OK;
 }

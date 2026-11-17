@@ -32,6 +32,8 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 // #define SHOW_DEBUG_INFO
 
 #ifdef SHOW_DEBUG_INFO
@@ -82,6 +84,7 @@ HRESULT CDecoder::DecodeUncompressed(UInt32 unpackSize)
       cur = kBufSize;
     const UInt32 cur2 = (UInt32)m_InStream.ReadBytes(buf, cur);
     m_OutWindowStream.PutBytes(buf, cur2);
+    unpackSize -= cur2;
     if (cur != cur2)
       return S_FALSE;
   }
@@ -441,6 +444,13 @@ static const Byte k_D_extra[NUM_D_SYMBOLS] =
 
 // ---------- CBitStream ----------
 
+static Z7_FORCE_INLINE UInt32 FseInStream_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
 typedef struct
 {
   UInt32 accum;
@@ -453,7 +463,7 @@ static Z7_FORCE_INLINE int FseInStream_Init(CBitStream *s,
     const Byte **pbuf)
 {
   *pbuf -= 4;
-  s->accum = GetUi32(*pbuf);
+  s->accum = FseInStream_Load32(*pbuf);
   if (n)
   {
     s->numBits = (unsigned)(n + 32);
@@ -478,7 +488,7 @@ static Z7_FORCE_INLINE int FseInStream_Init(CBitStream *s,
   if (nbits) { \
     buf -= (nbits >> 3); \
     if (buf < buf_check) return S_FALSE; \
-    UInt32 v = GetUi32(buf); \
+    UInt32 v = FseInStream_Load32(buf); \
     in.accum = (in.accum << nbits) | mask31(v, nbits); \
     in.numBits += nbits; }}
 
@@ -839,24 +849,9 @@ HRESULT CDecoder::DecodeLzfse(UInt32 unpackSize, Byte version)
 }
 
 
-HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *outStream,
-    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress)
+HRESULT CDecoder::DecodeBlocks(const UInt64 *inSize, const UInt64 *outSize,
+    ICompressProgressInfo *progress)
 {
-  PRF(printf("\n\nLzfseDecoder %7u %7u\n", (unsigned)*outSize, (unsigned)*inSize));
-
-  const UInt32 kLzfseDictSize = 1 << 18;
-  if (!m_OutWindowStream.Create(kLzfseDictSize))
-    return E_OUTOFMEMORY;
-  if (!m_InStream.Create(1 << 18))
-    return E_OUTOFMEMORY;
-
-  m_OutWindowStream.SetStream(outStream);
-  m_OutWindowStream.Init(false);
-  m_InStream.SetStream(inStream);
-  m_InStream.Init();
-  
-  CCoderReleaser coderReleaser(this);
-
   UInt64 prevOut = 0;
   UInt64 prevIn = 0;
 
@@ -889,10 +884,10 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
     if ((v & 0xFFFFFF) != 0x787662) // bvx
       return S_FALSE;
     v >>= 24;
-    
+
     if (v == 0x24) // '$', end of stream
       break;
-    
+
     UInt32 unpackSize;
     RINOK(GetUInt32(unpackSize))
 
@@ -904,7 +899,7 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
         cur = (UInt32)rem;
     }
     unpackSize -= cur;
-    
+
     HRESULT res;
     if (v == kSignature_LZFSE_V1 || v == kSignature_LZFSE_V2)
       res = DecodeLzfse(cur, (Byte)v);
@@ -919,21 +914,49 @@ HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *
       res = DecodeUncompressed(cur);
     else
       return E_NOTIMPL;
-    
+
     if (res != S_OK)
       return res;
-    
+
     if (unpackSize != 0)
       return S_FALSE;
   }
+
+  return S_OK;
+}
+
+
+HRESULT CDecoder::CodeReal(ISequentialInStream *inStream, ISequentialOutStream *outStream,
+    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress)
+{
+  PRF(printf("\n\nLzfseDecoder %7u %7u\n", (unsigned)*outSize, (unsigned)*inSize));
+
+  const UInt32 kLzfseDictSize = 1 << 18;
+  if (!m_OutWindowStream.Create(kLzfseDictSize))
+    return E_OUTOFMEMORY;
+  if (!m_InStream.Create(1 << 18))
+    return E_OUTOFMEMORY;
+
+  m_OutWindowStream.SetStream(outStream);
+  m_OutWindowStream.Init(false);
+  m_InStream.SetStream(inStream);
+  m_InStream.Init();
   
-  coderReleaser.NeedFlush = false;
-  HRESULT res = m_OutWindowStream.Flush();
-  if (res == S_OK)
+  HRESULT result;
+  try
+  {
+    result = DecodeBlocks(inSize, outSize, progress);
+  }
+  catch(const CLzOutWindowException &e) { return e.ErrorCode; }
+  catch(const CInBufferException &e) { result = e.ErrorCode; }
+  catch(...) { result = E_OUTOFMEMORY; }
+
+  RINOK(m_OutWindowStream.Flush())
+  if (result == S_OK)
     if ((!LzvnMode && inSize && *inSize != m_InStream.GetProcessedSize())
         || (outSize && *outSize != m_OutWindowStream.GetProcessedSize()))
-      res = S_FALSE;
-  return res;
+      result = S_FALSE;
+  return result;
 }
 
 

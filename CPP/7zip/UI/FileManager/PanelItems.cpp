@@ -130,7 +130,7 @@ HRESULT CPanel::InitColumns()
 
   {
     UInt32 numProps;
-    _folder->GetNumberOfProperties(&numProps);
+    RINOK(_folder->GetNumberOfProperties(&numProps))
     
     for (UInt32 i = 0; i < numProps; i++)
     {
@@ -177,7 +177,7 @@ HRESULT CPanel::InitColumns()
   if (_folderRawProps)
   {
     UInt32 numProps;
-    _folderRawProps->GetNumRawProps(&numProps);
+    RINOK(_folderRawProps->GetNumRawProps(&numProps))
     
     for (UInt32 i = 0; i < numProps; i++)
     {
@@ -464,6 +464,30 @@ extern DWORD g_Num_SetItemText;
 extern UInt32 g_NumMessages;
 */
 
+class CListViewRedrawGuard
+{
+  NControl::CListView &_listView;
+  bool _disabled;
+  Z7_CLASS_NO_COPY(CListViewRedrawGuard)
+public:
+  CListViewRedrawGuard(NControl::CListView &listView):
+      _listView(listView), _disabled(true)
+    { _listView.SetRedraw(false); }
+  ~CListViewRedrawGuard()
+  {
+    if (_disabled)
+    {
+      Restore();
+      _listView.InvalidateRect(NULL, true);
+    }
+  }
+  void Restore()
+  {
+    _listView.SetRedraw(true);
+    _disabled = false;
+  }
+};
+
 HRESULT CPanel::RefreshListCtrl(const CSelectedState &state)
 {
   m_DropHighlighted_SelectionIndex = -1;
@@ -490,7 +514,7 @@ HRESULT CPanel::RefreshListCtrl(const CSelectedState &state)
   if (focusedPos < 0)
     focusedPos = 0;
 
-  _listView.SetRedraw(false);
+  CListViewRedrawGuard redrawGuard(_listView);
   // m_RedrawEnabled = false;
 
   LVITEMW item;
@@ -526,7 +550,7 @@ HRESULT CPanel::RefreshListCtrl(const CSelectedState &state)
     CMyComPtr<IFolderSetFlatMode> folderSetFlatMode;
     _folder.QueryInterface(IID_IFolderSetFlatMode, &folderSetFlatMode);
     if (folderSetFlatMode)
-      folderSetFlatMode->SetFlatMode(BoolToInt(_flatMode));
+      RINOK(folderSetFlatMode->SetFlatMode(BoolToInt(_flatMode)))
   }
 
   /*
@@ -547,7 +571,7 @@ HRESULT CPanel::RefreshListCtrl(const CSelectedState &state)
   RINOK(InitColumns())
 
   UInt32 numItems;
-  _folder->GetNumberOfItems(&numItems);
+  RINOK(_folder->GetNumberOfItems(&numItems))
   {
     NCOM::CPropVariant prop;
     _isDirVector.ClearAndSetSize(numItems);
@@ -922,7 +946,7 @@ HRESULT CPanel::RefreshListCtrl(const CSelectedState &state)
 
   Print_OnNotify("after  EnsureVisible");
 
-  _listView.SetRedraw(true);
+  redrawGuard.Restore();
 
   Print_OnNotify("after  SetRedraw");
 

@@ -90,8 +90,10 @@ Z7_class_CHandler_final: public CHandlerImg
 
   HRESULT Seek2(UInt64 offset)
   {
+    Reset_PosInArc();
+    RINOK(InStream_SeekSet(Stream, offset))
     _posInArc = offset;
-    return InStream_SeekSet(Stream, offset);
+    return S_OK;
   }
 
   HRESULT InitAndSeek()
@@ -147,7 +149,10 @@ Z7_COM7F_IMF(CHandler::Read(void *data, UInt32 size, UInt32 *processedSize))
           RINOK(Seek2(offset))
         }
         HRESULT res = Stream->Read(data, size, &size);
-        _posInArc += size;
+        if (res == S_OK)
+          _posInArc += size;
+        else
+          Reset_PosInArc();
         _virtPos += size;
         if (processedSize)
           *processedSize = size;

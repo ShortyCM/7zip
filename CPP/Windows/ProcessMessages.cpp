@@ -11,6 +11,11 @@ void ProcessMessages(HWND window)
   MSG msg;
   while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) )
   {
+    if (msg.message == WM_QUIT)
+    {
+      ::PostQuitMessage((int)msg.wParam);
+      break;
+    }
     if (window == (HWND) NULL || !IsDialogMessage(window, &msg))
     {
       TranslateMessage(&msg);

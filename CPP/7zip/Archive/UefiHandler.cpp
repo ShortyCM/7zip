@@ -35,10 +35,25 @@
 #define PRF(x)
 #endif
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
-#define Get24(p) (Get32(p) & 0xFFFFFF)
+static UInt16 Get16(const Byte *p)
+{
+  return (UInt16)((UInt16)p[0] | ((UInt16)p[1] << 8));
+}
+
+static UInt32 Get24(const Byte *p)
+{
+  return (UInt32)p[0] | ((UInt32)p[1] << 8) | ((UInt32)p[2] << 16);
+}
+
+static UInt32 Get32(const Byte *p)
+{
+  return Get24(p) | ((UInt32)p[3] << 24);
+}
+
+static UInt64 Get64(const Byte *p)
+{
+  return (UInt64)Get32(p) | ((UInt64)Get32(p + 4) << 32);
+}
 
 namespace NArchive {
 namespace NUefi {
@@ -184,21 +199,21 @@ static const char *FindExt(const Byte *p, size_t size)
   switch (i)
   {
     case kSig_BMP:
-      if (GetUi32(p + 2) > size || GetUi32(p + 0xA) > size)
+      if (Get32(p + 2) > size || Get32(p + 0xA) > size)
         return NULL;
       break;
     case kSig_RIFF:
-      if (GetUi32(p + 8) == 0x45564157 || GetUi32(p + 0xC) == 0x20746D66 )
+      if (Get32(p + 8) == 0x45564157 || Get32(p + 0xC) == 0x20746D66 )
         return "wav";
       break;
     case kSig_PE:
     {
       if (size < 512)
         return NULL;
-      UInt32 peOffset = GetUi32(p + 0x3C);
+      UInt32 peOffset = Get32(p + 0x3C);
       if (peOffset >= 0x1000 || peOffset + 512 > size || (peOffset & 7) != 0)
         return NULL;
-      if (GetUi32(p + peOffset) != 0x00004550)
+      if (Get32(p + peOffset) != 0x00004550)
         return NULL;
       break;
     }
@@ -1513,7 +1528,7 @@ HRESULT CHandler::ParseIntelMe(
   if (!IsIntelMe(p))
     return S_FALSE;
 
-  UInt32 v0 = GetUi32(p + 20);
+  UInt32 v0 = Get32(p + 20);
   // UInt32 numRegions = (v0 >> 24) & 0x7;
   UInt32 regAddr = (v0 >> 12) & 0xFF0;
   // UInt32 numComps  = (v0 >> 8) & 0x3;
@@ -1528,7 +1543,7 @@ HRESULT CHandler::ParseIntelMe(
     UInt32 offset = regAddr + i * 4;
     if (offset + 4 > exactSize)
       break;
-    UInt32 val = GetUi32(p + offset);
+    UInt32 val = Get32(p + offset);
 
     // only 12 bits probably are OK.
     // How does it work for files larger than 16 MB?
@@ -1806,7 +1821,9 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
       {
         opRes = NExtract::NOperationResult::kDataError;
         CMyComPtr<ISequentialInStream> inStream;
-        GetStream(index, &inStream);
+        const HRESULT hres = GetStream(index, &inStream);
+        if (hres != S_OK && hres != S_FALSE)
+          return hres;
         if (inStream)
         {
           RINOK(copyCoder.Code(inStream, realOutStream, NULL, lps))
@@ -1824,6 +1841,7 @@ Z7_COM7F_IMF(CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 Z7_COM7F_IMF(CHandler::GetStream(UInt32 index, ISequentialInStream **stream))
 {
   COM_TRY_BEGIN
+  *stream = NULL;
   const CItem &item = _items[_items2[index].MainIndex];
   if (item.IsDir)
     return S_FALSE;

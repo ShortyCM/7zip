@@ -181,19 +181,23 @@ struct CHeader
     return true;
   }
 
-  bool Parse(Byte *p);
+  bool Parse(Byte *p, bool &isValid);
 };
 
 static const unsigned kHeader2Size = 1 << 12;
 
-bool CHeader::Parse(Byte *p)
+bool CHeader::Parse(Byte *p, bool &isValid)
 {
+  isValid = false;
   if (Get32(p) != 0x64616568) // "head"
     return false;
   const UInt32 crc = Get32(p + 4);
   SetUi32(p + 4, 0)
   if (Crc32c_Calc(p, kHeader2Size) != crc)
     return false;
+  // A valid header participates in current-header selection even if its
+  // version or log layout cannot be processed.
+  isValid = true;
   G64(8, SequenceNumber);
   for (unsigned i = 0; i < 3; i++)
     Guids[i].SetFrom(p + 0x10 + 0x10 * i);
@@ -597,7 +601,7 @@ bool CMetaHeader::Parse(const Byte *p, size_t size)
     return false;
   if (!VirtualDiskSize_Defined)
     return false;
-  if (((UInt32)VirtualDiskSize & ((UInt32)1 << LogicalSectorSize_Log)) != 0)
+  if (((UInt32)VirtualDiskSize & (((UInt32)1 << LogicalSectorSize_Log) - 1)) != 0)
     return false;
 
   // vhdx specification sets limit for 64 TB.
@@ -1171,19 +1175,26 @@ HRESULT CHandler::Open3()
   HeadersSize = (UInt32)1 << 20;
   CHeader headers[2];
   Z7_memset_0_ARRAY(headers);
+  bool headerIsValid[2];
+  bool headerIsOK[2];
   {
     Byte header[kHeader2Size];
     for (unsigned i = 0; i < 2; i++)
     {
       RINOK(Seek2((1 << 16) * (1 + i)))
       RINOK(Read_FALSE(header, kHeader2Size))
-      bool headerIsOK = headers[i].Parse(header);
-      if (!headerIsOK)
-        return S_FALSE;
+      headerIsOK[i] = headers[i].Parse(header, headerIsValid[i]);
     }
   }
   unsigned mainIndex;
-       if (headers[0].SequenceNumber > headers[1].SequenceNumber) mainIndex = 0;
+  if (!headerIsValid[0])
+  {
+    if (!headerIsValid[1])
+      return S_FALSE;
+    mainIndex = 1;
+  }
+  else if (!headerIsValid[1]) mainIndex = 0;
+  else if (headers[0].SequenceNumber > headers[1].SequenceNumber) mainIndex = 0;
   else if (headers[0].SequenceNumber < headers[1].SequenceNumber) mainIndex = 1;
   else
   {
@@ -1193,11 +1204,13 @@ HRESULT CHandler::Open3()
            or if it is valid and its SequenceNumber field is
            greater than the other header's SequenceNumber".
        but we support such Disk2vhd archives. */
-    if (!headers[0].IsEqualTo(headers[1]))
+    if (!headerIsOK[0] || !headerIsOK[1] || !headers[0].IsEqualTo(headers[1]))
       return S_FALSE;
     mainIndex = 0;
   }
 
+  if (!headerIsOK[mainIndex])
+    return S_FALSE;
   const CHeader &h = headers[mainIndex];
   Header = h;
   if (h.LogLength != 0)
@@ -1244,7 +1257,7 @@ HRESULT CHandler::Open3()
     {
       // RINOK(Seek2((1 << 16) * (3 + i)));
       // RINOK(Read_FALSE(temp, kRegionSize));
-      if (regions[i].Parse(temp))
+      if (regions[i].Parse(temp + i * kRegionSize))
       {
         if (correctRegionIndex < 0)
           correctRegionIndex = (int)i;
@@ -1937,12 +1950,7 @@ HRESULT CHandler::OpenParent(IArchiveOpenCallback *openArchiveCallback, bool &_p
     {
       Parent = NULL;
       ParentStream.Release();
-      if (res == E_ABORT)
-        return res;
-      if (res != S_FALSE)
-      {
-        // we must show that error code
-      }
+      return res;
     }
 
     if (res == S_OK)

@@ -37,6 +37,7 @@ void CExtractCallbackImp::Init(
     bool passwordIsDefined,
     const UString &password)
 {
+  ThereWereErrors = false;
   m_PasswordIsDefined = passwordIsDefined;
   m_Password = password;
   m_CodePage = codePage;
@@ -158,6 +159,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::MessageError(const wchar_t *message))
 {
   MT_LOCK
 
+  ThereWereErrors = true;
   AString s (UnicodeStringToMultiByte(message, CP_OEMCP));
   if (g_StartupInfo.ShowErrorMessage((const char *)s) == -1)
     return E_ABORT;
@@ -234,6 +236,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::SetOperationResult(Int32 opRes, Int32 encrypte
   }
   else
   {
+    ThereWereErrors = true;
     AString s;
     SetExtractErrorMessage(opRes, encrypted, s);
     if (PrintErrorMessage(s, m_CurrentFilePath) == -1)
@@ -250,6 +253,7 @@ Z7_COM7F_IMF(CExtractCallbackImp::ReportExtractResult(Int32 opRes, Int32 encrypt
 
   if (opRes != NArchive::NExtract::NOperationResult::kOK)
   {
+    ThereWereErrors = true;
     AString s;
     SetExtractErrorMessage(opRes, encrypted, s);
     if (PrintErrorMessage(s, name) == -1)

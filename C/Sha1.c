@@ -110,7 +110,21 @@ BoolInt Sha1_SetFunction(CSha1 *p, unsigned algo)
   #define w(i) W[(i)&15]
 #endif
 
-#define w0(i) (W[i] = GetBe32(data + (size_t)(i) * 4))
+static Z7_FORCE_INLINE UInt32 Sha1_GetBe32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetBe32(&value);
+}
+
+static Z7_FORCE_INLINE void Sha1_SetBe32(Byte *p, UInt32 value)
+{
+  UInt32 encoded;
+  SetBe32(&encoded, value)
+  memcpy(p, &encoded, sizeof(encoded));
+}
+
+#define w0(i) (W[i] = Sha1_GetBe32(data + (size_t)(i) * 4))
 #define w1(i) (w(i) = rotlFixed(w((size_t)(i)-3) ^ w((size_t)(i)-8) ^ w((size_t)(i)-14) ^ w((size_t)(i)-16), 1))
 
 #define f0(x,y,z)  ( 0x5a827999 + (z^(x&(y^z))) )
@@ -340,11 +354,11 @@ void Sha1_Final(CSha1 *p, Byte *digest)
   }
   Sha1_UpdateBlock(p);
 
-  SetBe32(digest,      p->state[0])
-  SetBe32(digest + 4,  p->state[1])
-  SetBe32(digest + 8,  p->state[2])
-  SetBe32(digest + 12, p->state[3])
-  SetBe32(digest + 16, p->state[4])
+  Sha1_SetBe32(digest,      p->state[0]);
+  Sha1_SetBe32(digest + 4,  p->state[1]);
+  Sha1_SetBe32(digest + 8,  p->state[2]);
+  Sha1_SetBe32(digest + 12, p->state[3]);
+  Sha1_SetBe32(digest + 16, p->state[4]);
   
   Sha1_InitState(p);
 }
@@ -353,14 +367,15 @@ void Sha1_Final(CSha1 *p, Byte *digest)
 void Sha1_PrepareBlock(const CSha1 *p, Byte *block, unsigned size)
 {
   const UInt64 numBits = (p->v.vars.count + size) << 3;
-  SetBe32(&((UInt32 *)(void *)block)[SHA1_NUM_BLOCK_WORDS - 2], (UInt32)(numBits >> 32))
-  SetBe32(&((UInt32 *)(void *)block)[SHA1_NUM_BLOCK_WORDS - 1], (UInt32)(numBits))
+  Sha1_SetBe32(block + (SHA1_NUM_BLOCK_WORDS - 2) * 4, (UInt32)(numBits >> 32));
+  Sha1_SetBe32(block + (SHA1_NUM_BLOCK_WORDS - 1) * 4, (UInt32)numBits);
   // SetBe32((UInt32 *)(block + size), 0x80000000);
-  SetUi32((UInt32 *)(void *)(block + size), 0x80)
+  block[size] = 0x80;
+  memset(block + size + 1, 0, 3);
   size += 4;
   while (size != (SHA1_NUM_BLOCK_WORDS - 2) * 4)
   {
-    *((UInt32 *)(void *)(block + size)) = 0;
+    memset(block + size, 0, 4);
     size += 4;
   }
 }
@@ -378,11 +393,11 @@ void Sha1_GetBlockDigest(const CSha1 *p, const Byte *data, Byte *destDigest)
   
   SHA1_UPDATE_BLOCKS(p)(st, data, 1);
 
-  SetBe32(destDigest + 0    , st[0])
-  SetBe32(destDigest + 1 * 4, st[1])
-  SetBe32(destDigest + 2 * 4, st[2])
-  SetBe32(destDigest + 3 * 4, st[3])
-  SetBe32(destDigest + 4 * 4, st[4])
+  Sha1_SetBe32(destDigest + 0    , st[0]);
+  Sha1_SetBe32(destDigest + 1 * 4, st[1]);
+  Sha1_SetBe32(destDigest + 2 * 4, st[2]);
+  Sha1_SetBe32(destDigest + 3 * 4, st[3]);
+  Sha1_SetBe32(destDigest + 4 * 4, st[4]);
 }
 
 

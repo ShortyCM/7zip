@@ -498,6 +498,7 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
 
 Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVARIANT *values, UInt32 numProps))
 {
+  COM_TRY_BEGIN
   InitMethodProps();
   
   for (UInt32 i = 0; i < numProps; i++)
@@ -621,6 +622,7 @@ Z7_COM7F_IMF(CHandler::SetProperties(const wchar_t * const *names, const PROPVAR
   }
   
   return S_OK;
+  COM_TRY_END
 }
 
 }}

@@ -65,7 +65,7 @@ struct CWzAesExtra
       return false;
     Strength = p[4];
     // 9.31: The BUG was fixed:
-    Method = GetUi16(p + 5);
+    Method = (UInt16)(p[5] | ((UInt16)p[6] << 8));
     return true;
   }
   

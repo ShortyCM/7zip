@@ -157,8 +157,19 @@ void CPercentPrinter::Print()
           delta = 1;
         len -= delta;
         _tempU = FileName;
-        _tempU.Delete(len / 2, _tempU.Len() - len);
-        _tempU.Insert(len / 2, L" . ");
+        unsigned head = len / 2;
+        unsigned tail = _tempU.Len() - (len - head);
+        // Keep UTF-16 surrogate pairs together at both abbreviation boundaries.
+        if (head != 0 &&
+            _tempU[head - 1] >= 0xd800 && _tempU[head - 1] <= 0xdbff &&
+            _tempU[head] >= 0xdc00 && _tempU[head] <= 0xdfff)
+          --head;
+        if (tail < _tempU.Len() &&
+            _tempU[tail - 1] >= 0xd800 && _tempU[tail - 1] <= 0xdbff &&
+            _tempU[tail] >= 0xdc00 && _tempU[tail] <= 0xdfff)
+          ++tail;
+        _tempU.Delete(head, tail - head);
+        _tempU.Insert(head, L" . ");
         _so->Normalize_UString_Path(_tempU);
         _so->Convert_UString_to_AString(_tempU, _temp);
         if (_s.Len() + _temp.Len() <= MaxLen)

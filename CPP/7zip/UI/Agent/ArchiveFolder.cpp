@@ -24,8 +24,10 @@ Z7_COM7F_IMF(CAgentFolder::SetZoneIdMode(NExtract::NZoneIdMode::EEnum zoneMode))
 
 Z7_COM7F_IMF(CAgentFolder::SetZoneIdFile(const Byte *data, UInt32 size))
 {
+  COM_TRY_BEGIN
   _zoneBuf.CopyFrom(data, size);
   return S_OK;
+  COM_TRY_END
 }
 
 

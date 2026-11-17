@@ -18,14 +18,20 @@
 
 #define Get16(p) GetUi16(p)
 #define Get32(p) GetUi32(p)
-#define Get64(p) GetUi64(p)
+
+static Z7_FORCE_INLINE UInt64 Get64(const void *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
 
 using namespace NWindows;
 
 namespace NArchive {
 
 namespace NMbr {
-const char *GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize);
+HRESULT GetFileSystem(ISequentialInStream *stream, UInt64 partitionSize, const char *&fileSystem);
 }
 
 namespace NFat {
@@ -88,6 +94,9 @@ struct CPartition
 struct CPartType
 {
   UInt32 Id;
+  UInt16 Mid;
+  UInt16 High;
+  Byte Tail[8];
   const char *Ext;
   const char *Type;
 };
@@ -96,44 +105,47 @@ static const CPartType kPartTypes[] =
 {
   // { 0x0, NULL, "Unused" },
 
-  { 0x21686148, NULL, "BIOS Boot" },
+  { 0x21686148, 0x6449, 0x6E6F, { 0x74, 0x4E, 0x65, 0x65, 0x64, 0x45, 0x46, 0x49 }, NULL, "BIOS Boot" },
 
-  { 0xC12A7328, NULL, "EFI System" },
-  { 0x024DEE41, NULL, "MBR" },
+  { 0xC12A7328, 0xF81F, 0x11D2, { 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B }, NULL, "EFI System" },
+  { 0x024DEE41, 0x33E7, 0x11D3, { 0x9D, 0x69, 0x00, 0x08, 0xC7, 0x81, 0xF3, 0x9F }, NULL, "MBR" },
       
-  { 0xE3C9E316, NULL, "Windows MSR" },
-  { 0xEBD0A0A2, NULL, "Windows BDP" },
-  { 0x5808C8AA, NULL, "Windows LDM Metadata" },
-  { 0xAF9B60A0, NULL, "Windows LDM Data" },
-  { 0xDE94BBA4, NULL, "Windows Recovery" },
+  { 0xE3C9E316, 0x0B5C, 0x4DB8, { 0x81, 0x7D, 0xF9, 0x2D, 0xF0, 0x02, 0x15, 0xAE }, NULL, "Windows MSR" },
+  { 0xEBD0A0A2, 0xB9E5, 0x4433, { 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7 }, NULL, "Windows BDP" },
+  { 0x5808C8AA, 0x7E8F, 0x42E0, { 0x85, 0xD2, 0xE1, 0xE9, 0x04, 0x34, 0xCF, 0xB3 }, NULL, "Windows LDM Metadata" },
+  { 0xAF9B60A0, 0x1431, 0x4F62, { 0xBC, 0x68, 0x33, 0x11, 0x71, 0x4A, 0x69, 0xAD }, NULL, "Windows LDM Data" },
+  { 0xDE94BBA4, 0x06D1, 0x4D40, { 0xA1, 0x6A, 0xBF, 0xD5, 0x01, 0x79, 0xD6, 0xAC }, NULL, "Windows Recovery" },
   // { 0x37AFFC90, NULL, "IBM GPFS" },
   // { 0xE75CAF8F, NULL, "Windows Storage Spaces" },
 
-  { 0x0FC63DAF, NULL, "Linux Data" },
-  { 0x0657FD6D, NULL, "Linux Swap" },
-  { 0x44479540, NULL, "Linux root (x86)" },
-  { 0x4F68BCE3, NULL, "Linux root (x86-64)" },
-  { 0x69DAD710, NULL, "Linux root (ARM)" },
-  { 0xB921B045, NULL, "Linux root (ARM64)" },
-  { 0x993D8D3D, NULL, "Linux root (IA-64)" },
+  { 0x0FC63DAF, 0x8483, 0x4772, { 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4 }, NULL, "Linux Data" },
+  { 0x0657FD6D, 0xA4AB, 0x43C4, { 0x84, 0xE5, 0x09, 0x33, 0xC8, 0x4B, 0x4F, 0x4F }, NULL, "Linux Swap" },
+  { 0x44479540, 0xF297, 0x41B2, { 0x9A, 0xF7, 0xD1, 0x31, 0xD5, 0xF0, 0x45, 0x8A }, NULL, "Linux root (x86)" },
+  { 0x4F68BCE3, 0xE8CD, 0x4DB1, { 0x96, 0xE7, 0xFB, 0xCA, 0xF9, 0x84, 0xB7, 0x09 }, NULL, "Linux root (x86-64)" },
+  { 0x69DAD710, 0x2CE4, 0x4E3C, { 0xB1, 0x6C, 0x21, 0xA1, 0xD4, 0x9A, 0xBE, 0xD3 }, NULL, "Linux root (ARM)" },
+  { 0xB921B045, 0x1DF0, 0x41C3, { 0xAF, 0x44, 0x4C, 0x6F, 0x28, 0x0D, 0x3F, 0xAE }, NULL, "Linux root (ARM64)" },
+  { 0x993D8D3D, 0xF80E, 0x4225, { 0x85, 0x5A, 0x9D, 0xAF, 0x8E, 0xD7, 0xEA, 0x97 }, NULL, "Linux root (IA-64)" },
   
 
-  { 0x83BD6B9D, NULL, "FreeBSD Boot" },
-  { 0x516E7CB4, NULL, "FreeBSD Data" },
-  { 0x516E7CB5, NULL, "FreeBSD Swap" },
-  { 0x516E7CB6, "ufs", "FreeBSD UFS" },
-  { 0x516E7CB8, NULL, "FreeBSD Vinum" },
-  { 0x516E7CB8, "zfs", "FreeBSD ZFS" },
+  { 0x83BD6B9D, 0x7F41, 0x11DC, { 0xBE, 0x0B, 0x00, 0x15, 0x60, 0xB8, 0x4F, 0x0F }, NULL, "FreeBSD Boot" },
+  { 0x516E7CB4, 0x6ECF, 0x11D6, { 0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B }, NULL, "FreeBSD Data" },
+  { 0x516E7CB5, 0x6ECF, 0x11D6, { 0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B }, NULL, "FreeBSD Swap" },
+  { 0x516E7CB6, 0x6ECF, 0x11D6, { 0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B }, "ufs", "FreeBSD UFS" },
+  { 0x516E7CB8, 0x6ECF, 0x11D6, { 0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B }, NULL, "FreeBSD Vinum" },
+  { 0x516E7CBA, 0x6ECF, 0x11D6, { 0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B }, "zfs", "FreeBSD ZFS" },
 
-  { 0x48465300, "hfsx", "HFS+" },
-  { 0x7C3457EF, "apfs", "APFS" },
+  { 0x48465300, 0x0000, 0x11AA, { 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC }, "hfsx", "HFS+" },
+  { 0x7C3457EF, 0x0000, 0x11AA, { 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC }, "apfs", "APFS" },
 };
 
 static int FindPartType(const Byte *guid)
 {
   const UInt32 val = Get32(guid);
   for (unsigned i = 0; i < Z7_ARRAY_SIZE(kPartTypes); i++)
-    if (kPartTypes[i].Id == val)
+    if (kPartTypes[i].Id == val
+        && kPartTypes[i].Mid == Get16(guid + 4)
+        && kPartTypes[i].High == Get16(guid + 6)
+        && memcmp(kPartTypes[i].Tail, guid + 8, 8) == 0)
       return (int)i;
   return -1;
 }
@@ -269,7 +281,10 @@ HRESULT CHandler::Open2(IInStream *stream)
         RINOK(InStream_SeekSet(stream, _totalSize))
         bool areThereNonZeros = false;
         UInt64 numZeros = 0;
-        if (ReadZeroTail(stream, areThereNonZeros, numZeros, kRemMax) == S_OK)
+        const HRESULT res = ReadZeroTail(stream, areThereNonZeros, numZeros, kRemMax);
+        if (res != S_OK && res != S_FALSE)
+          return res;
+        if (res == S_OK)
           if (!areThereNonZeros)
             _totalSize += numZeros;
       }
@@ -304,11 +319,13 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *stream,
     if (t.Type && IsString1PrefixedByString2_NoCase_Ascii(t.Type, "Windows"))
     {
       CMyComPtr<ISequentialInStream> inStream;
-      if (
-          // ((IInArchiveGetStream *)this)->
-          GetStream(fileIndex, &inStream) == S_OK && inStream)
+      const HRESULT res = GetStream(fileIndex, &inStream);
+      if (res != S_OK && res != S_FALSE)
+        return res;
+      if (res == S_OK && inStream)
       {
-        const char *fs = NMbr::GetFileSystem(inStream, item.GetSize(_sectorSizeLog));
+        const char *fs;
+        RINOK(NMbr::GetFileSystem(inStream, item.GetSize(_sectorSizeLog), fs))
         if (fs)
           item.Ext = fs;
       }

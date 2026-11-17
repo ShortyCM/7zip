@@ -18,6 +18,7 @@ class CDynLimBuf
   bool _error;
 
   CDynLimBuf(const CDynLimBuf &s);
+  CDynLimBuf &operator=(const CDynLimBuf &s);
 
   // ---------- forbidden functions ----------
   CDynLimBuf &operator+=(wchar_t c);

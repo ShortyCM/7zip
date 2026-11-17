@@ -419,7 +419,8 @@ static SRes Lzma2DecMt_MtCallback_PreCode(void *pp, unsigned coderIndex)
   CLzma2DecMtThread *t = &me->coders[coderIndex];
   Byte *dest = t->outBuf;
 
-  if (t->inPreSize == 0)
+  if (t->inPreSize == 0
+      || (int)t->parseStatus == LZMA_STATUS_NOT_SPECIFIED)
   {
     t->codeRes = SZ_ERROR_DATA;
     return t->codeRes;
@@ -925,7 +926,11 @@ SRes Lzma2DecMt_Decode(CLzma2DecMtHandle p,
         if (p->mtc.mtProgress.res != SZ_OK)
           res = p->mtc.mtProgress.res;
         else
+        {
           needContinue = p->mtc.needContinue;
+          if (!needContinue)
+            res = p->mtc.codeRes;
+        }
       }
 
       if (!needContinue)
@@ -1073,20 +1078,29 @@ SRes Lzma2DecMt_Read(CLzma2DecMtHandle p,
     if (res != 0)
       return res;
     
-    /*
     if (status == LZMA_STATUS_FINISHED_WITH_MARK)
+    {
+      RINOK(readRes)
+      if (p->finishMode && p->outSize_Defined && p->outProcessed != p->outSize)
+        return SZ_ERROR_DATA;
       return readRes;
+    }
 
     if (size == 0 && status != LZMA_STATUS_NEEDS_MORE_INPUT)
     {
+      RINOK(readRes)
       if (p->finishMode && p->outSize_Defined && p->outProcessed >= p->outSize)
         return SZ_ERROR_DATA;
       return readRes;
     }
-    */
 
     if (inCur == 0 && outCur == 0)
+    {
+      RINOK(readRes)
+      if (p->finishMode && p->inLim == 0)
+        return SZ_ERROR_INPUT_EOF;
       return readRes;
+    }
   }
 }
 

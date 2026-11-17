@@ -53,7 +53,7 @@ STDAPI CreateObject(const GUID *clsid, const GUID *iid, void **outObject)
 STDAPI SetLargePageMode()
 {
   #if defined(Z7_LARGE_PAGES)
-  SetLargePageSize();
+  z7_LargePage_Set(0, 0, 0);
   #endif
   return S_OK;
 }

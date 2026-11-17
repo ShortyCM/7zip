@@ -6,6 +6,8 @@ This source code is licensed under BSD 2-Clause License.
 
 #include "Precomp.h"
 
+#include <string.h>
+
 #include "CpuArch.h"
 #include "RotateDefs.h"
 #include "Xxh64.h"
@@ -15,6 +17,20 @@ This source code is licensed under BSD 2-Clause License.
 #define Z7_XXH_PRIME64_3  UINT64_CONST(0x165667B19E3779F9)
 #define Z7_XXH_PRIME64_4  UINT64_CONST(0x85EBCA77C2B2AE63)
 #define Z7_XXH_PRIME64_5  UINT64_CONST(0x27D4EB2F165667C5)
+
+static Z7_FORCE_INLINE UInt32 Xxh64_GetUi32(const Byte *data)
+{
+  UInt32 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE UInt64 Xxh64_GetUi64(const Byte *data)
+{
+  UInt64 value;
+  memcpy(&value, data, sizeof(value));
+  return GetUi64(&value);
+}
 
 void Xxh64State_Init(CXxh64State *p)
 {
@@ -212,10 +228,10 @@ Xxh64State_UpdateBlocks_Unaligned_Select(CXxh64State *p, const void *_data, cons
   v3 = p->v[3];
   do
   {
-    v0 = Xxh64_Round(v0, GetUi64(data));  data += 8;
-    v1 = Xxh64_Round(v1, GetUi64(data));  data += 8;
-    v2 = Xxh64_Round(v2, GetUi64(data));  data += 8;
-    v3 = Xxh64_Round(v3, GetUi64(data));  data += 8;
+    v0 = Xxh64_Round(v0, Xxh64_GetUi64(data));  data += 8;
+    v1 = Xxh64_Round(v1, Xxh64_GetUi64(data));  data += 8;
+    v2 = Xxh64_Round(v2, Xxh64_GetUi64(data));  data += 8;
+    v3 = Xxh64_Round(v3, Xxh64_GetUi64(data));  data += 8;
   }
   while (data != end);
   p->v[0] = v0;
@@ -293,7 +309,7 @@ UInt64 Xxh64State_Digest(const CXxh64State *p, const void *_data, UInt64 count)
     const Byte *data = (const Byte *)_data;
     while (cnt >= 8)
     {
-      h ^= Xxh64_Round(0, GetUi64(data));
+      h ^= Xxh64_Round(0, Xxh64_GetUi64(data));
       data += 8;
       h = Z7_ROTL64(h, 27);
       h = MY_MUL64(h, Z7_XXH_PRIME64_1) + Z7_XXH_PRIME64_4;
@@ -301,7 +317,7 @@ UInt64 Xxh64State_Digest(const CXxh64State *p, const void *_data, UInt64 count)
     }
     if (cnt >= 4)
     {
-      const UInt32 v = GetUi32(data);
+      const UInt32 v = Xxh64_GetUi32(data);
       data += 4;
       h ^= MY_MUL_32_64(v, Z7_XXH_PRIME64_1);
       h = Z7_ROTL64(h, 23);

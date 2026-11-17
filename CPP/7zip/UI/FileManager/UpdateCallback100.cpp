@@ -9,9 +9,9 @@
 #include "LangUtils.h"
 #include "UpdateCallback100.h"
 
-Z7_COM7F_IMF(CUpdateCallback100Imp::ScanProgress(UInt64 /* numFolders */, UInt64 numFiles, UInt64 totalSize, const wchar_t *path, Int32 /* isDir */))
+Z7_COM7F_IMF(CUpdateCallback100Imp::ScanProgress(UInt64 /* numFolders */, UInt64 numFiles, UInt64 totalSize, const wchar_t *path, Int32 isDir))
 {
-  return ProgressDialog->Sync.ScanProgress(numFiles, totalSize, us2fs(path));
+  return ProgressDialog->Sync.ScanProgress(numFiles, totalSize, us2fs(path), IntToBool(isDir));
 }
 
 Z7_COM7F_IMF(CUpdateCallback100Imp::ScanError(const wchar_t *path, HRESULT errorCode))

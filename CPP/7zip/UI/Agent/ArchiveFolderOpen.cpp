@@ -5,6 +5,7 @@
 // #ifdef NEW_FOLDER_INTERFACE
 
 #include "../../../Common/StringToInt.h"
+#include "../../../Common/ComTry.h"
 #include "../../../Windows/DLL.h"
 #include "../../../Windows/ResourceString.h"
 
@@ -60,12 +61,12 @@ bool CCodecIcons::FindIconIndex(const UString &ext, int &iconIndex) const
 }
 
 
-void CArchiveFolderManager::LoadFormats()
+HRESULT CArchiveFolderManager::LoadFormats()
 {
   if (WasLoaded)
-    return;
+    return S_OK;
 
-  LoadGlobalCodecs();
+  RINOK(LoadGlobalCodecs())
 
   #ifdef Z7_EXTERNAL_CODECS
   CodecIconsVector.Clear();
@@ -77,6 +78,7 @@ void CArchiveFolderManager::LoadFormats()
   #endif
   InternalIcons.LoadIcons(g_hInstance);
   WasLoaded = true;
+  return S_OK;
 }
 
 /*
@@ -93,6 +95,7 @@ Z7_COM7F_IMF(CArchiveFolderManager::OpenFolderFile(IInStream *inStream,
     const wchar_t *filePath, const wchar_t *arcFormat,
     IFolderFolder **resultFolder, IProgress *progress))
 {
+  COM_TRY_BEGIN
   CMyComPtr<IArchiveOpenCallback> openArchiveCallback;
   if (progress)
   {
@@ -128,6 +131,7 @@ Z7_COM7F_IMF(CArchiveFolderManager::OpenFolderFile(IInStream *inStream,
     RINOK(hres)
   }
   return res;
+  COM_TRY_END
 }
 
 /*
@@ -163,8 +167,9 @@ static void AddIconExt(const CCodecIcons &lib, UString &dest)
 
 Z7_COM7F_IMF(CArchiveFolderManager::GetExtensions(BSTR *extensions))
 {
+  COM_TRY_BEGIN
   *extensions = NULL;
-  LoadFormats();
+  RINOK(LoadFormats())
   UString res;
   
   #ifdef Z7_EXTERNAL_CODECS
@@ -181,14 +186,16 @@ Z7_COM7F_IMF(CArchiveFolderManager::GetExtensions(BSTR *extensions))
       InternalIcons, res);
 
   return StringToBstr(res, extensions);
+  COM_TRY_END
 }
 
 
 Z7_COM7F_IMF(CArchiveFolderManager::GetIconPath(const wchar_t *ext, BSTR *iconPath, Int32 *iconIndex))
 {
+  COM_TRY_BEGIN
   *iconPath = NULL;
   *iconIndex = 0;
-  LoadFormats();
+  RINOK(LoadFormats())
 
   #ifdef Z7_EXTERNAL_CODECS
   // FOR_VECTOR (i, g_CodecsObj->Libs)
@@ -215,6 +222,7 @@ Z7_COM7F_IMF(CArchiveFolderManager::GetIconPath(const wchar_t *ext, BSTR *iconPa
     }
   }
   return S_OK;
+  COM_TRY_END
 }
 
 /*

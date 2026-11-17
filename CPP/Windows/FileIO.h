@@ -148,6 +148,8 @@ struct CReparseAttr
 namespace NIO {
 
 bool GetReparseData(CFSTR path, CByteBuffer &reparseData, BY_HANDLE_FILE_INFORMATION *fileInfo = NULL);
+bool GetReparseData(CFSTR path, CByteBuffer &reparseData,
+    BY_HANDLE_FILE_INFORMATION *fileInfo, bool &fileInfoDefined);
 bool SetReparseData(CFSTR path, bool isDir, const void *data, DWORD size);
 bool DeleteReparseData(CFSTR path);
 

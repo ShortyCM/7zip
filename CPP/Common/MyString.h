@@ -897,7 +897,7 @@ public:
   // operator const wchar_t *() const { return _chars; }
   const wchar_t *GetRawPtr() const { return _chars; }
 
-  int Compare(const wchar_t *s) const { return wcscmp(_chars, s); }
+  int Compare(const wchar_t *s) const { return wcscmp(_chars ? _chars : L"", s); }
 
   wchar_t *GetBuf(unsigned minLen)
   {

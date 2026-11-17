@@ -6,6 +6,12 @@
 
 void SplitStringToTwoStrings(const UString &src, UString &dest1, UString &dest2)
 {
+  if (&src == &dest1 || &src == &dest2)
+  {
+    const UString copy(src);
+    SplitStringToTwoStrings(copy, dest1, dest2);
+    return;
+  }
   dest1.Empty();
   dest2.Empty();
   bool quoteMode = false;
@@ -14,7 +20,7 @@ void SplitStringToTwoStrings(const UString &src, UString &dest1, UString &dest2)
     const wchar_t c = src[i];
     if (c == '\"')
       quoteMode = !quoteMode;
-    else if (c == ' ' && !quoteMode)
+    else if ((c == ' ' || c == '\t') && !quoteMode)
     {
       dest2 = src.Ptr(i + 1);
       return;

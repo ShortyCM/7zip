@@ -464,6 +464,8 @@ Z7_COM7F_IMF(CFilterCoder::Read(void *data, UInt32 size, UInt32 *processedSize))
 {
   if (processedSize)
     *processedSize = 0;
+  if (_outSize_Defined && _nowPos64 >= _outSize)
+    return S_OK;
   
   while (size != 0)
   {
@@ -521,6 +523,7 @@ Z7_COM7F_IMF(CFilterCoder::Read(void *data, UInt32 size, UInt32 *processedSize))
     if (convSize > bufPos)
     {
       // AES
+      _convSize = 0;
       if (convSize > _bufSize)
         return E_FAIL;
       if (!_encodeMode)

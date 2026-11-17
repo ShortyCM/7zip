@@ -100,7 +100,7 @@ typedef UInt16 CXzStreamFlags;
 
 #define XzFlags_IsSupported(f) ((f) <= XZ_CHECK_MASK)
 #define XzFlags_GetCheckType(f) ((f) & XZ_CHECK_MASK)
-#define XzFlags_HasDataCrc32(f) (Xz_GetCheckType(f) == XZ_CHECK_CRC32)
+#define XzFlags_HasDataCrc32(f) (XzFlags_GetCheckType(f) == XZ_CHECK_CRC32)
 unsigned XzFlags_GetCheckSize(CXzStreamFlags f);
 
 SRes Xz_ParseHeader(CXzStreamFlags *p, const Byte *buf);

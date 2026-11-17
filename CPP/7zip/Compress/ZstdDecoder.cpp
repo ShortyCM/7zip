@@ -234,16 +234,9 @@ Z7_COM7F_IMF(CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream 
          - SZ_ERROR_INPUT_EOF   : if ZSTD_STATUS_NEEDS_MORE_INPUT
     */
     _inProcessed -= ResInfo.extraSize;
-    if (hres_Read != S_OK && _state.inLim == _state.inPos && readWasFinished)
-    {
-      /* if (there is stream reading error,
-           and decoding was stopped because of end of input stream),
-           then we use reading error as main error code */
-      if (sres == SZ_OK ||
-          sres == SZ_ERROR_INPUT_EOF ||
-          sres == SZ_ERROR_NO_ARCHIVE)
-        hres = hres_Read;
-    }
+    // A failed read can also return damaged bytes. Preserve its error code.
+    if (hres_Read != S_OK)
+      hres = hres_Read;
     if (sres == SZ_ERROR_INPUT_EOF && !FinishMode)
     {
       /* SZ_ERROR_INPUT_EOF case is allowed case for (!FinishMode) mode.
@@ -298,6 +291,8 @@ Z7_COM7F_IMF(CDecoder::ReleaseInStream())
 
 HRESULT CDecoder::GetFinishResult()
 {
+  if (_hres_Read != S_OK)
+    return _hres_Read;
   if (_state.winPos != _state.wrPos || !_wasFinished)
     return FinishMode ? S_FALSE : S_OK;
   // _state.winPos == _state.wrPos
@@ -332,7 +327,7 @@ Z7_COM7F_IMF(CDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
         {
           // if (FinishMode) and we are not allowed to write more, then it's data error
           if (FinishMode && _state.outSize_Defined && _state.outSize == _writtenSize)
-            return S_FALSE;
+            return _hres_Read != S_OK ? _hres_Read : S_FALSE;
           return S_OK;
         }
         if (cur > size)
@@ -410,13 +405,8 @@ Z7_COM7F_IMF(CDecoder::Read(void *data, UInt32 size, UInt32 *processedSize))
     ZstdDec_GetResInfo(_dec, &_state, sres, &ResInfo);
     sres = ResInfo.decode_SRes;
     _inProcessed -= ResInfo.extraSize;
-    if (_hres_Read != S_OK && inFinished)
-    {
-      if (sres == SZ_OK ||
-          sres == SZ_ERROR_INPUT_EOF ||
-          sres == SZ_ERROR_NO_ARCHIVE)
-        hres = _hres_Read;
-    }
+    if (_hres_Read != S_OK)
+      hres = _hres_Read;
     if (sres == SZ_ERROR_INPUT_EOF && !FinishMode)
       ResInfo.decode_SRes = sres = SZ_OK;
     if (hres == S_OK)

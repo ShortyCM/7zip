@@ -25,7 +25,10 @@
 
 // #define Get16(p) GetBe16(p)
 #define Get24(p) GetBe24(p)
-#define Get32(p) GetBe32(p)
+static UInt32 Get32(const Byte *p)
+{
+  return ((UInt32)p[0] << 24) | ((UInt32)p[1] << 16) | ((UInt32)p[2] << 8) | p[3];
+}
 
 namespace NArchive {
 namespace NFlv {
@@ -138,6 +141,7 @@ static const char * const g_Rates[4] =
 
 Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *value))
 {
+  COM_TRY_BEGIN
   NWindows::NCOM::CPropVariant prop;
   const CItem2 &item = _items2[index];
   switch (propID)
@@ -169,6 +173,7 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
   }
   prop.Detach(value);
   return S_OK;
+  COM_TRY_END
 }
 
 /*
@@ -282,6 +287,7 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
   if (!inBuf.Create(1 << 15))
     return E_OUTOFMEMORY;
   inBuf.SetStream(stream);
+  inBuf.Init();
 
   CObjectVector<CItem> items;
   int lasts[kNumTypes];
@@ -371,6 +377,9 @@ HRESULT CHandler::Open2(IInStream *stream, IArchiveOpenCallback *callback)
       RINOK(callback->SetCompleted(NULL, &offset))
     }
   }
+  #ifdef Z7_NO_EXCEPTIONS
+  RINOK(inBuf.ErrorCode)
+  #endif
   if (items.IsEmpty())
     return S_FALSE;
 
@@ -426,11 +435,14 @@ Z7_COM7F_IMF(CHandler::Open(IInStream *inStream, const UInt64 *, IArchiveOpenCal
     if (res == S_OK)
       _stream = inStream;
   }
-  catch(...) { res = S_FALSE; }
+  #ifndef Z7_NO_EXCEPTIONS
+  catch(const CInBufferException &e) { res = e.ErrorCode; }
+  #endif
+  catch(...) { res = E_OUTOFMEMORY; }
   if (res != S_OK)
   {
     Close();
-    return S_FALSE;
+    return res;
   }
   return S_OK;
   COM_TRY_END

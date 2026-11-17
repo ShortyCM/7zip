@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include <string.h>
+
 #include "../../../../C/CpuArch.h"
 
 #include "../../../Common/ComTry.h"
@@ -39,8 +41,19 @@
 
 using namespace NWindows;
 
-#define Get16(p) GetUi16(p)
-#define Get32(p) GetUi32(p)
+static Z7_FORCE_INLINE UInt16 Get16(const Byte *p)
+{
+  UInt16 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi16(&value);
+}
+
+static Z7_FORCE_INLINE UInt32 Get32(const Byte *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
 
 namespace NArchive {
 namespace NRar {
@@ -158,7 +171,7 @@ class CInArchive
 
 
   HRESULT ReadBytesSpec(void *data, size_t *size);
-  bool ReadBytesAndTestSize(void *data, UInt32 size);
+  HRESULT ReadBytesAndTestSize(void *data, UInt32 size, bool &isFull);
   void ReadName(const Byte *p, unsigned nameSize, CItem &item);
   bool ReadHeaderReal(const Byte *p, unsigned size, CItem &item);
   
@@ -274,12 +287,13 @@ HRESULT CInArchive::ReadBytesSpec(void *data, size_t *resSize)
   return ReadStream(m_Stream, data, resSize);
 }
 
-bool CInArchive::ReadBytesAndTestSize(void *data, UInt32 size)
+HRESULT CInArchive::ReadBytesAndTestSize(void *data, UInt32 size, bool &isFull)
 {
+  isFull = false;
   size_t processed = size;
-  if (ReadBytesSpec(data, &processed) != S_OK)
-    return false;
-  return processed == size;
+  RINOK(ReadBytesSpec(data, &processed))
+  isFull = processed == size;
+  return S_OK;
 }
 
 
@@ -518,6 +532,7 @@ HRESULT CInArchive::GetNextItem(CItem &item, ICryptoGetTextPassword *getTextPass
 {
   filled = false;
   error = k_ErrorType_OK;
+  bool readOK;
   for (;;)
   {
     RINOK(InStream_SeekSet(m_Stream, m_Position))
@@ -538,7 +553,8 @@ HRESULT CInArchive::GetNextItem(CItem &item, ICryptoGetTextPassword *getTextPass
         // Salt
         const UInt32 kSaltSize = 8;
         Byte salt[kSaltSize];
-        if (!ReadBytesAndTestSize(salt, kSaltSize))
+        RINOK(ReadBytesAndTestSize(salt, kSaltSize, readOK))
+        if (!readOK)
           return S_FALSE;
         m_Position += kSaltSize;
         RINOK(m_RarAES->SetDecoderProperties2(salt, kSaltSize))
@@ -645,7 +661,8 @@ HRESULT CInArchive::GetNextItem(CItem &item, ICryptoGetTextPassword *getTextPass
           if (m_FileHeaderData.Size() < m_BlockHeader.HeadSize)
             m_FileHeaderData.ChangeSize_KeepData(m_BlockHeader.HeadSize, 7);
           UInt32 afterSize = m_BlockHeader.HeadSize - 7;
-          if (ReadBytesAndTestSize(m_FileHeaderData + 7, afterSize))
+          RINOK(ReadBytesAndTestSize(m_FileHeaderData + 7, afterSize, readOK))
+          if (readOK)
             processed += afterSize;
           else
           {
@@ -703,7 +720,8 @@ HRESULT CInArchive::GetNextItem(CItem &item, ICryptoGetTextPassword *getTextPass
         m_FileHeaderData.ChangeSize_KeepData(m_BlockHeader.HeadSize, 7);
       // m_CurData = (Byte *)m_FileHeaderData;
       // m_PosLimit = m_BlockHeader.HeadSize;
-      if (!ReadBytesAndTestSize(m_FileHeaderData + 7, m_BlockHeader.HeadSize - 7))
+      RINOK(ReadBytesAndTestSize(m_FileHeaderData + 7, m_BlockHeader.HeadSize - 7, readOK))
+      if (!readOK)
       {
         error = k_ErrorType_UnexpectedEnd;
         return S_OK;
@@ -743,7 +761,8 @@ HRESULT CInArchive::GetNextItem(CItem &item, ICryptoGetTextPassword *getTextPass
     {
       if (m_FileHeaderData.Size() < 7 + 4)
         m_FileHeaderData.ChangeSize_KeepData(7 + 4, 7);
-      if (!ReadBytesAndTestSize(m_FileHeaderData + 7, 4))
+      RINOK(ReadBytesAndTestSize(m_FileHeaderData + 7, 4, readOK))
+      if (!readOK)
       {
         error = k_ErrorType_UnexpectedEnd;
         return S_OK;

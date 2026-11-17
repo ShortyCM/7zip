@@ -71,6 +71,8 @@ class CDecoder
 
 public:
 
+  HRESULT ProgressResult;
+
   HRESULT Extract(
       ISequentialInStream *inStreamFork, ISequentialOutStream *realOutStream,
       UInt64 forkSize,

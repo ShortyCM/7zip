@@ -129,9 +129,12 @@ API_FUNC_static_IsArc IsArc_Apm(const Byte *p, size_t size)
 {
   if (size < kSectorSize)
     return k_IsArc_Res_NEED_MORE;
-  if (GetUi32(p + 12) != 0)
+  UInt32 v;
+  memcpy(&v, p + 12, sizeof(v));
+  if (v != 0)
     return k_IsArc_Res_NO;
-  UInt32 v = GetUi32(p); // we read as little-endian
+  memcpy(&v, p, sizeof(v));
+  v = GetUi32a(&v); // we read as little-endian
   v ^= kSig0 | (unsigned)kSig1 << 8;
   if (v & ~((UInt32)0xf << 17))
     return k_IsArc_Res_NO;

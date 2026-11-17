@@ -31,6 +31,9 @@ public:
   operator HANDLE() { return _object; }
   WRes Create(bool manualReset, bool initiallyOwn, LPCTSTR name = NULL, LPSECURITY_ATTRIBUTES sa = NULL)
   {
+    const WRes res = Close();
+    if (res != 0)
+      return res;
     _object = ::CreateEvent(sa, BoolToBOOL(manualReset), BoolToBOOL(initiallyOwn), name);
     if (name == NULL && _object != NULL)
       return 0;
@@ -38,6 +41,9 @@ public:
   }
   WRes Open(DWORD desiredAccess, bool inheritHandle, LPCTSTR name)
   {
+    const WRes res = Close();
+    if (res != 0)
+      return res;
     _object = ::OpenEvent(desiredAccess, BoolToBOOL(inheritHandle), name);
     if (_object != NULL)
       return 0;
@@ -56,7 +62,11 @@ class CManualResetEvent: public CBaseEvent
 public:
   WRes Create(bool initiallyOwn = false)
   {
+    #ifdef _WIN32
+    return CBaseEvent::Create(true, initiallyOwn);
+    #else
     return ManualResetEvent_Create(&_object, initiallyOwn ? 1: 0);
+    #endif
   }
   WRes CreateIfNotCreated_Reset()
   {
@@ -77,7 +87,11 @@ class CAutoResetEvent: public CBaseEvent
 public:
   WRes Create()
   {
+    #ifdef _WIN32
+    return CBaseEvent::Create(false, false);
+    #else
     return AutoResetEvent_CreateNotSignaled(&_object);
+    #endif
   }
   WRes CreateIfNotCreated_Reset()
   {
@@ -227,10 +241,17 @@ public:
   }
   WRes Create()
   {
+    if (_isValid)
+      return 0;
     RINOK(::pthread_mutex_init(&_mutex, NULL))
     const WRes ret = ::pthread_cond_init(&_cond, NULL);
+    if (ret != 0)
+    {
+      ::pthread_mutex_destroy(&_mutex);
+      return ret;
+    }
     _isValid = 1;
-    return ret;
+    return 0;
   }
   WRes Enter()
   {
@@ -365,13 +386,12 @@ public:
       return EINVAL;
 
     RINOK(this->_sync->Enter())
-    UInt32 newCount = this->_count + releaseCount;
-    if (newCount > this->_maxCount)
+    if (releaseCount > this->_maxCount - this->_count)
     {
       RINOK(this->_sync->Leave())
       return ERROR_TOO_MANY_POSTS; // EINVAL
     }
-    this->_count = newCount;
+    this->_count += releaseCount;
 
     return this->_sync->LeaveAndSignal();
   }

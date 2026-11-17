@@ -86,6 +86,29 @@ bool MyGetModuleFileName(FString &path)
       path = us2fs(s);
       return true;
     }
+    if (size != 0)
+    {
+      UString buffer;
+      unsigned capacity = MAX_PATH + 1;
+      for (;;)
+      {
+        if (capacity > (unsigned)0xFFFFFFFF / 2)
+        {
+          ::SetLastError(ERROR_FILENAME_EXCED_RANGE);
+          return false;
+        }
+        capacity *= 2;
+        const DWORD length = ::GetModuleFileNameW(hModule, buffer.GetBuf(capacity), capacity);
+        if (length == 0)
+          return false;
+        if (length < capacity)
+        {
+          buffer.ReleaseBuf_SetEnd(length);
+          path = us2fs(buffer);
+          return true;
+        }
+      }
+    }
   }
   return false;
 }

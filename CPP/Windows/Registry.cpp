@@ -43,11 +43,16 @@ LONG CKey::Create(HKEY parentKey, LPCTSTR keyName,
   HKEY key = NULL;
   LONG res = RegCreateKeyEx(parentKey, keyName, 0, keyClass,
       options, accessMask, securityAttributes, &key, &dispositionReal);
-  if (disposition != NULL)
-    *disposition = dispositionReal;
   if (res == ERROR_SUCCESS)
   {
+    if (disposition != NULL)
+      *disposition = dispositionReal;
     res = Close();
+    if (res != ERROR_SUCCESS)
+    {
+      RegCloseKey(key);
+      return res;
+    }
     _object = key;
   }
   return res;
@@ -62,6 +67,11 @@ LONG CKey::Open(HKEY parentKey, LPCTSTR keyName, REGSAM accessMask) throw()
   {
     res = Close();
     MYASSERT(res == ERROR_SUCCESS);
+    if (res != ERROR_SUCCESS)
+    {
+      RegCloseKey(key);
+      return res;
+    }
     _object = key;
   }
   return res;
@@ -73,7 +83,8 @@ LONG CKey::Close() throw()
   if (_object != NULL)
   {
     res = RegCloseKey(_object);
-    _object = NULL;
+    if (res == ERROR_SUCCESS)
+      _object = NULL;
   }
   return res;
 }
@@ -268,6 +279,12 @@ LONG CKey::GetValue_bool_IfOk(LPCTSTR name, bool &value) throw()
 
 LONG CKey::QueryValue(LPCTSTR name, CSysString &value)
 {
+  CSysString nameCopy;
+  if (name)
+  {
+    nameCopy = name;
+    name = nameCopy;
+  }
   value.Empty();
   LONG res = ERROR_SUCCESS;
   {
@@ -315,6 +332,12 @@ LONG CKey::QueryValue(LPCTSTR name, CSysString &value)
 
 LONG CKey::QueryValue(LPCWSTR name, UString &value)
 {
+  UString nameCopy;
+  if (name)
+  {
+    nameCopy = name;
+    name = nameCopy;
+  }
   value.Empty();
   LONG res = ERROR_SUCCESS;
   if (g_IsNT)
@@ -364,6 +387,12 @@ LONG CKey::QueryValue(LPCWSTR name, UString &value)
 
 LONG CKey::QueryValue_Binary(LPCTSTR name, CByteBuffer &value)
 {
+  CSysString nameCopy;
+  if (name)
+  {
+    nameCopy = name;
+    name = nameCopy;
+  }
   // value.Free();
   DWORD size_prev = 0;
   LONG res = ERROR_SUCCESS;
@@ -403,20 +432,28 @@ LONG CKey::EnumKeys(CSysStringVector &keyNames)
 {
   keyNames.Clear();
   CSysString keyName;
-  for (DWORD index = 0; ; index++)
+  unsigned bufferSize = MAX_PATH + 1; // 256 in ATL
+  for (DWORD index = 0; ; )
   {
-    const unsigned kBufSize = MAX_PATH + 1; // 256 in ATL
     FILETIME lastWriteTime;
-    DWORD nameSize = kBufSize;
+    DWORD nameSize = bufferSize;
     const LONG res = ::RegEnumKeyEx(_object, index,
-        keyName.GetBuf(kBufSize), &nameSize,
+        keyName.GetBuf(bufferSize), &nameSize,
         NULL, NULL, NULL, &lastWriteTime);
-    keyName.ReleaseBuf_CalcLen(kBufSize);
+    if (res == ERROR_MORE_DATA)
+    {
+      if (bufferSize > (unsigned)0xFFFFFFFF / 2)
+        return res;
+      bufferSize *= 2;
+      continue;
+    }
     if (res == ERROR_NO_MORE_ITEMS)
       return ERROR_SUCCESS;
     if (res != ERROR_SUCCESS)
       return res;
+    keyName.ReleaseBuf_CalcLen(bufferSize);
     keyNames.Add(keyName);
+    index++;
   }
 }
 
@@ -445,9 +482,9 @@ LONG CKey::SetValue_Strings(LPCTSTR valueName, const UStringVector &strings)
 
 LONG CKey::GetValue_Strings(LPCTSTR valueName, UStringVector &strings)
 {
-  strings.Clear();
   CByteBuffer buffer;
   const LONG res = QueryValue_Binary(valueName, buffer);
+  strings.Clear();
   if (res != ERROR_SUCCESS)
     return res;
   const size_t dataSize = buffer.Size();

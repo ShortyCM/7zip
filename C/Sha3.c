@@ -54,8 +54,15 @@ void Sha3_Init(CSha3 *p)
         LS_5 (M, 4, a90, a91, a92, a93, a94) \
 
 
+static Z7_FORCE_INLINE UInt64 Sha3_GetUi64(const Byte *p)
+{
+  UInt64 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi64(&value);
+}
+
 #define XOR_1(i, a0) \
-        a0 ^= GetUi64(data + (i) * 8); \
+        a0 ^= Sha3_GetUi64(data + (i) * 8); \
 
 #define XOR_4(i, a0,a1,a2,a3) \
         XOR_1 ((i)    , a0); \

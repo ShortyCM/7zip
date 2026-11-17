@@ -650,7 +650,7 @@ bool RemoveDirWithSubItems(const FString &path)
       else if (!DeleteFileAlways(s))
       {
         lastError = GetLastError();
-        isError = false;
+        isError = true;
       }
     }
     if (isError)
@@ -940,13 +940,14 @@ bool CreateTempFile2(CFSTR prefix, bool addRandom, AString &postfix, NIO::COutFi
 
 bool CTempFile::Create(CFSTR prefix, NIO::COutFile *outFile)
 {
+  const FString prefixCopy(prefix);
   if (!Remove())
     return false;
   _path.Empty();
   AString postfix;
-  if (!CreateTempFile2(prefix, false, postfix, outFile))
+  if (!CreateTempFile2(prefixCopy, false, postfix, outFile))
     return false;
-  _path = prefix;
+  _path = prefixCopy;
   _path += postfix;
   _mustBeDeleted = true;
   return true;
@@ -954,6 +955,7 @@ bool CTempFile::Create(CFSTR prefix, NIO::COutFile *outFile)
 
 bool CTempFile::CreateRandomInTempFolder(CFSTR namePrefix, NIO::COutFile *outFile)
 {
+  const FString prefixCopy(namePrefix);
   if (!Remove())
     return false;
   _path.Empty();
@@ -961,7 +963,7 @@ bool CTempFile::CreateRandomInTempFolder(CFSTR namePrefix, NIO::COutFile *outFil
   if (!MyGetTempPath(tempPath))
     return false;
   AString postfix;
-  tempPath += namePrefix;
+  tempPath += prefixCopy;
   if (!CreateTempFile2(tempPath, true, postfix, outFile))
     return false;
   _path = tempPath;
@@ -1006,13 +1008,14 @@ bool CTempFile::MoveTo(CFSTR name, bool deleteDestBefore,
 #ifdef _WIN32
 bool CTempDir::Create(CFSTR prefix)
 {
+  const FString prefixCopy(prefix);
   if (!Remove())
     return false;
   _path.Empty();
   FString tempPath;
   if (!MyGetTempPath(tempPath))
     return false;
-  tempPath += prefix;
+  tempPath += prefixCopy;
   AString postfix;
   if (!CreateTempFile2(tempPath, true, postfix, NULL))
     return false;
@@ -1044,15 +1047,30 @@ bool RemoveDir(CFSTR path)
 static BOOL My_CopyFile(CFSTR oldFile, CFSTR newFile, ICopyFileProgress *progress)
 {
   {
-    NIO::COutFile outFile;
-    if (!outFile.Create_NEW(newFile))
-      return FALSE;
+    struct CErrnoPreserver
+    {
+      int Error;
+      bool IsDefined;
+      CErrnoPreserver(): Error(0), IsDefined(false) {}
+      ~CErrnoPreserver() { if (IsDefined) errno = Error; }
+      void Save() { Error = errno; IsDefined = true; }
+    } savedErrno;
     NIO::CInFile inFile;
     if (!inFile.Open(oldFile))
+    {
+      savedErrno.Save();
       return FALSE;
+    }
     
     const size_t k_BufSize = 1 << 16;
     CAlignedBuffer1 buf(k_BufSize);
+
+    NIO::COutFile outFile;
+    if (!outFile.Create_NEW(newFile))
+    {
+      savedErrno.Save();
+      return FALSE;
+    }
     
     UInt64 length = 0;
     if (progress && !inFile.GetLength(length))
@@ -1063,13 +1081,33 @@ static BOOL My_CopyFile(CFSTR oldFile, CFSTR newFile, ICopyFileProgress *progres
     {
       const ssize_t num = inFile.read_part(buf, k_BufSize);
       if (num == 0)
+      {
+       #if defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+        if (!outFile.Close())
+        {
+          savedErrno.Save();
+          break;
+        }
+        if (!inFile.Close())
+        {
+          savedErrno.Save();
+          break;
+        }
+       #endif
         return TRUE;
+      }
       if (num < 0)
+      {
+        savedErrno.Save();
         break;
+      }
       size_t processed;
       const ssize_t num2 = outFile.write_full(buf, (size_t)num, processed);
       if (num2 != num || processed != (size_t)num)
+      {
+        savedErrno.Save();
         break;
+      }
       cur += (size_t)num2;
       if (progress && cur - prev >= (1u << 20))
       {
@@ -1077,6 +1115,7 @@ static BOOL My_CopyFile(CFSTR oldFile, CFSTR newFile, ICopyFileProgress *progres
         if (progress->CopyFileProgress(length, cur) != PROGRESS_CONTINUE)
         {
           errno = EINTR; // instead of WIN32::ERROR_REQUEST_ABORTED
+          savedErrno.Save();
           break;
         }
       }

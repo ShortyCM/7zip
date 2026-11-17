@@ -10,6 +10,20 @@
 namespace NCompress {
 namespace NLzms {
 
+static Z7_FORCE_INLINE UInt32 Lzms_Load32(const void *p)
+{
+  UInt32 value;
+  memcpy(&value, p, sizeof(value));
+  return GetUi32(&value);
+}
+
+static Z7_FORCE_INLINE void Lzms_Store32(void *p, UInt32 value)
+{
+  UInt32 aligned;
+  SetUi32(&aligned, value)
+  memcpy(p, &aligned, sizeof(aligned));
+}
+
 class CBitDecoder
 {
 public:
@@ -36,7 +50,7 @@ public:
   Z7_FORCE_INLINE
   UInt32 GetValue_InHigh32bits()
   {
-    return GetUi32(_buf - 4) << _bitPos;
+    return Lzms_Load32(_buf - 4) << _bitPos;
   }
   
   void MovePos(unsigned numBits)
@@ -48,10 +62,12 @@ public:
 
   UInt32 ReadBits32(unsigned numBits)
   {
+    if (numBits == 0)
+      return 0;
     UInt32 mask = (((UInt32)1 << numBits) - 1);
     numBits += _bitPos;
     const Byte *buf = _buf;
-    UInt32 v = GetUi32(buf - 4);
+    UInt32 v = Lzms_Load32(buf - 4);
     if (numBits > 32)
     {
       v <<= (numBits - 32);
@@ -242,11 +258,11 @@ static void x86_Filter(Byte *data, UInt32 size, Int32 *history)
     Int32 *target;
     {
       Byte *p2 = p + codeLen;
-      UInt32 n = GetUi32(p2);
+      UInt32 n = Lzms_Load32(p2);
       if (i - last_x86_pos <= maxTransOffset)
       {
-        n = (UInt32)((Int32)n - i);
-        SetUi32(p2, n)
+        n -= (UInt32)i;
+        Lzms_Store32(p2, n);
       }
       target = history + (((UInt32)i + n) & 0xFFFF);
     }

@@ -135,8 +135,16 @@ void CBrowseEnumerator::Enumerate(unsigned level)
   {
     CEnumerator enumerator;
     enumerator.SetDirPrefix(Path);
-    while (enumerator.Next(fi))
+    for (;;)
     {
+      bool found;
+      if (!enumerator.Next(fi, found))
+      {
+        bi.WasInterrupted = true;
+        break;
+      }
+      if (!found)
+        break;
       if (level == 0)
       {
         if (bi.NumRootItems == 0)
@@ -1450,8 +1458,8 @@ static const FChar *FindNonHexChar_F(const FChar *s Z7_lifetimebound) throw()
   {
     const FChar c = (FChar)*s++; // pointer can go 1 byte after end
     if ( (c < '0' || c > '9')
-      && (c < 'a' || c > 'z')
-      && (c < 'A' || c > 'Z'))
+      && (c < 'a' || c > 'f')
+      && (c < 'A' || c > 'F'))
     return s - 1;
   }
 }
@@ -1604,7 +1612,16 @@ HRESULT CBrowseDialog2::Reload(const UString &pathPrefix, const UStringVector &s
 
   SetItemText(IDT_BROWSE2_FOLDER, DirPrefix);
 
-  _list.SetRedraw(false);
+  struct CRedrawGuard
+  {
+    NControl::CListView &List;
+    CRedrawGuard(NControl::CListView &list): List(list) { List.SetRedraw(false); }
+    ~CRedrawGuard()
+    {
+      List.SetRedraw(true);
+      List.InvalidateRect(NULL, true);
+    }
+  } redrawGuard(_list);
   _list.DeleteAllItems();
 
   LVITEMW item;
@@ -1752,8 +1769,6 @@ HRESULT CBrowseDialog2::Reload(const UString &pathPrefix, const UStringVector &s
        _list.SetItemState(0, LVIS_FOCUSED, LVIS_FOCUSED);
   }
   _list.EnsureVisible(_list.GetFocusedItem(), false);
-  _list.SetRedraw(true);
-  _list.InvalidateRect(NULL, true);
   return S_OK;
 }
 

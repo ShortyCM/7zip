@@ -85,7 +85,7 @@ static HRESULT CopyFileSpec(CFSTR fromPath, CFSTR toPath,
     if (!inFile.Read(tempBuffer.buffer, curSize, processedSize))
       return GetLastError_noZero_HRESULT();
     if (processedSize == 0)
-      break;
+      return HRESULT_FROM_WIN32(ERROR_HANDLE_EOF);
     curSize = processedSize;
     if (writeToDisk)
     {
@@ -100,7 +100,8 @@ static HRESULT CopyFileSpec(CFSTR fromPath, CFSTR toPath,
       return E_FAIL;
     pos += curSize;
   }
-  
+  if (!outFile.Close())
+    return GetLastError_noZero_HRESULT();
   return S_OK;
 }
 
@@ -167,10 +168,9 @@ Z7_COM7F_IMF(CFSDrives::LoadItems())
           &volumeSerialNumber, &maximumComponentLength, &fileSystemFlags,
           di.FileSystemName);
 
-      NSystem::MyGetDiskFreeSpace(driveName,
+      di.KnownSizes = NSystem::MyGetDiskFreeSpace(driveName,
           di.ClusterSize, di.DriveSize, di.FreeSpace);
-      di.KnownSizes = true;
-      di.KnownSize = true;
+      di.KnownSize = di.KnownSizes;
     }
     
     _drives.Add(di);
@@ -259,6 +259,7 @@ HRESULT CFSDrives::BindToFolderSpec(CFSTR name, IFolderFolder **resultFolder)
   if (_superMode)
     path = kSuperPrefix;
   path += name;
+  NName::NormalizeDirPathPrefix(path);
   RINOK(fsFolderSpec->Init(path))
   *resultFolder = subFolder.Detach();
   return S_OK;
@@ -322,6 +323,8 @@ Z7_COM7F_IMF(CFSDrives::GetFolderProperty(PROPID propID, PROPVARIANT *value))
 Z7_COM7F_IMF(CFSDrives::GetSystemIconIndex(UInt32 index, Int32 *iconIndex))
 {
   *iconIndex = -1;
+  if (index >= _drives.Size())
+    return E_INVALIDARG;
   const CDriveInfo &di = _drives[index];
   return Shell_GetFileInfo_SysIconIndex_for_Path_return_HRESULT(
       di.FullSystemName,
@@ -398,7 +401,10 @@ Z7_COM7F_IMF(CFSDrives::CopyTo(Int32 moveMode, const UInt32 *indices, UInt32 num
   UInt32 i;
   for (i = 0; i < numItems; i++)
   {
-    const CDriveInfo &di = _drives[indices[i]];
+    const UInt32 index = indices[i];
+    if (index >= _drives.Size())
+      return E_INVALIDARG;
+    const CDriveInfo &di = _drives[index];
     if (di.KnownSize)
       totalSize += di.DriveSize;
   }
@@ -440,12 +446,11 @@ Z7_COM7F_IMF(CFSDrives::CopyTo(Int32 moveMode, const UInt32 *indices, UInt32 num
     const FString srcPath = di.GetDeviceFileIoName();
 
     UInt64 fileSize = 0;
-    if (GetFileSize(index, fileSize) != S_OK)
+    RINOK(GetFileSize(index, fileSize))
+    if (!di.KnownSize || fileSize != di.DriveSize)
     {
-      return E_FAIL;
-    }
-    if (!di.KnownSize)
-    {
+      if (di.KnownSize)
+        totalSize -= di.DriveSize;
       totalSize += fileSize;
       RINOK(callback->SetTotal(totalSize))
     }
@@ -469,6 +474,7 @@ Z7_COM7F_IMF(CFSDrives::CopyTo(Int32 moveMode, const UInt32 *indices, UInt32 num
     const UInt32 bufferSize = (di.DriveType == DRIVE_REMOVABLE) ? (18 << 10) * 4 : kBufferSize;
     RINOK(CopyFileSpec(srcPath, us2fs(destPathResult), false, fileSize, bufferSize, completedSize, callback))
     completedSize += fileSize;
+    RINOK(callback->SetCompleted(&completedSize))
   }
 
   return S_OK;

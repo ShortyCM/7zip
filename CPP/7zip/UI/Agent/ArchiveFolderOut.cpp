@@ -417,12 +417,12 @@ Z7_COM7F_IMF(CAgentFolder::CreateFolder(const wchar_t *name, IProgress *progress
   if (_proxy2)
   {
     if (_proxy2->IsThere_SubDir(_proxyDirIndex, name))
-      return ERROR_ALREADY_EXISTS;
+      return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
   }
   else
   {
     if (_proxy->FindSubDir(_proxyDirIndex, name) != -1)
-      return ERROR_ALREADY_EXISTS;
+      return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
   }
   
   return CommonUpdateOperation(AGENT_OP_CreateFolder, false, name, NULL, NULL, 0, progress);

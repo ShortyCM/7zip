@@ -28,7 +28,7 @@ class CHuffmanDecoder
   Byte _symbols[kMaxHuffTableSize];
 public:
   bool Build(const Byte *lens, unsigned numSymbols) throw();
-  unsigned Decode(CInBit *inStream) const throw();
+  unsigned Decode(CInBit *inStream) const;
 };
 
 

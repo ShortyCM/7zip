@@ -157,6 +157,13 @@ static bool EnhancedMaskTest(const wchar_t *mask, const wchar_t *name)
 
 void SplitPathToParts(const UString &path, UStringVector &pathParts)
 {
+  FOR_VECTOR (i, pathParts)
+    if (&path == &pathParts[i])
+    {
+      const UString copy(path);
+      SplitPathToParts(copy, pathParts);
+      return;
+    }
   pathParts.Clear();
   unsigned len = path.Len();
   if (len == 0)
@@ -176,6 +183,12 @@ void SplitPathToParts(const UString &path, UStringVector &pathParts)
 
 void SplitPathToParts_2(const UString &path, UString &dirPrefix, UString &name)
 {
+  if (&path == &dirPrefix)
+  {
+    const UString copy(path);
+    SplitPathToParts_2(copy, dirPrefix, name);
+    return;
+  }
   const wchar_t *start = path;
   const wchar_t *p = start + path.Len();
   for (; p != start; p--)
@@ -187,6 +200,12 @@ void SplitPathToParts_2(const UString &path, UString &dirPrefix, UString &name)
 
 void SplitPathToParts_Smart(const UString &path, UString &dirPrefix, UString &name)
 {
+  if (&path == &dirPrefix)
+  {
+    const UString copy(path);
+    SplitPathToParts_Smart(copy, dirPrefix, name);
+    return;
+  }
   const wchar_t *start = path;
   const wchar_t *p = start + path.Len();
   if (p != start)

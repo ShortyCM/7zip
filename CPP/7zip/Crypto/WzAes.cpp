@@ -10,6 +10,8 @@ Note: you must include MyAes.cpp to project to initialize AES tables
 
 #include "../../../C/CpuArch.h"
 
+#include "../../Common/ComTry.h"
+
 #include "../Common/StreamUtils.h"
 
 #include "Pbkdf2HmacSha1.h"
@@ -25,11 +27,15 @@ static const UInt32 kNumKeyGenIterations = 1000;
 
 Z7_COM7F_IMF(CBaseCoder::CryptoSetPassword(const Byte *data, UInt32 size))
 {
+  COM_TRY_BEGIN
+
   if (size > kPasswordSizeMax)
     return E_INVALIDARG;
   _key.Password.Wipe();
   _key.Password.CopyFrom(data, (size_t)size);
   return S_OK;
+
+  COM_TRY_END
 }
 
 void CBaseCoder::Init2()
@@ -97,7 +103,7 @@ HRESULT CDecoder::ReadHeader(ISequentialInStream *inStream)
   const unsigned saltSize = _key.GetSaltSize();
   const unsigned extraSize = saltSize + kPwdVerifSize;
   Byte temp[kSaltSizeMax + kPwdVerifSize];
-  RINOK(ReadStream_FAIL(inStream, temp, extraSize))
+  RINOK(ReadStream_FALSE(inStream, temp, extraSize))
   unsigned i;
   for (i = 0; i < saltSize; i++)
     _key.Salt[i] = temp[i];
@@ -125,7 +131,7 @@ HRESULT CDecoder::CheckMac(ISequentialInStream *inStream, bool &isOK)
   isOK = false;
   MY_ALIGN (16)
   Byte mac1[kMacSize];
-  RINOK(ReadStream_FAIL(inStream, mac1, kMacSize))
+  RINOK(ReadStream_FALSE(inStream, mac1, kMacSize))
   MY_ALIGN (16)
   UInt32 mac2[NSha1::kNumDigestWords];
   Hmac()->Final((Byte *)mac2);

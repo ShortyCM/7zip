@@ -8,6 +8,14 @@ namespace NCompress {
 namespace NDeflate {
 namespace NDecoder {
 
+#ifdef Z7_NO_EXCEPTIONS
+  #define DEFLATE_CHECK_INPUT RINOK(m_InBitStream.GetErrorCode())
+  #define DEFLATE_CHECK_OUTPUT RINOK(m_OutWindowStream.ErrorCode)
+#else
+  #define DEFLATE_CHECK_INPUT
+  #define DEFLATE_CHECK_OUTPUT
+#endif
+
 CCoder::CCoder(bool deflate64Mode):
     _deflateNSIS(false),
     _deflate64Mode(deflate64Mode),
@@ -195,6 +203,7 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
     _remainLen--;
     const Byte b = m_OutWindowStream.GetByte(_rep0);
     m_OutWindowStream.PutByte(b);
+    DEFLATE_CHECK_OUTPUT
     curSize--;
   }
 
@@ -221,6 +230,7 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
       
       if (!ReadTables())
         return S_FALSE;
+      DEFLATE_CHECK_INPUT
       if (m_InBitStream.ExtraBitsWereRead())
         return S_FALSE;
       _needReadTable = false;
@@ -238,7 +248,13 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
       m_StoredBlockSize -= num;
       curSize -= num;
       for (; num && m_InBitStream.ThereAreDataInBitsBuffer(); num--)
-        m_OutWindowStream.PutByte(ReadAlignedByte());
+      {
+        const Byte b = ReadAlignedByte();
+        if (m_InBitStream.ExtraBitsWereRead())
+          return S_FALSE;
+        m_OutWindowStream.PutByte(b);
+        DEFLATE_CHECK_OUTPUT
+      }
       if (num)
       {
 #if 1
@@ -252,9 +268,11 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
               a = num;
           // a != 0
           a = m_InBitStream.ReadDirectBytesPart(buf, a);
+          DEFLATE_CHECK_INPUT
           if (a == 0)
             return S_FALSE;
           m_OutWindowStream.SkipWrittenBytes(a);
+          DEFLATE_CHECK_OUTPUT
           num -= (UInt32)a;
         }
         while (num);
@@ -280,9 +298,13 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
       Z7_HUFF_DECODE_CHECK(sym, &m_MainDecoder, kNumHuffmanBits, kNumTableBits_Main, &m_InBitStream, { return S_FALSE; })
 #endif
 
+      DEFLATE_CHECK_INPUT
+      if (m_InBitStream.ExtraBitsWereRead())
+        return S_FALSE;
       if (sym < 0x100)
       {
         m_OutWindowStream.PutByte((Byte)sym);
+        DEFLATE_CHECK_OUTPUT
         curSize--;
         continue;
       }
@@ -332,11 +354,15 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
           sym += m_InBitStream.ReadBits(numDirectBits);
         }
 #endif
+        DEFLATE_CHECK_INPUT
+        if (m_InBitStream.ExtraBitsWereRead())
+          return S_FALSE;
         UInt32 locLen = len;
         if (locLen > curSize)
           locLen = (UInt32)curSize;
         if (!m_OutWindowStream.CopyBlock(sym, locLen))
           return S_FALSE;
+        DEFLATE_CHECK_OUTPUT
         curSize -= locLen;
         len -= locLen;
         if (len != 0)
@@ -366,12 +392,13 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
 #ifdef Z7_NO_EXCEPTIONS
 
 #define DEFLATE_TRY_BEGIN
-#define DEFLATE_TRY_END(res)
+#define DEFLATE_TRY_END(res, outputErrorAction)
 
 #else
 
 #define DEFLATE_TRY_BEGIN try {
-#define DEFLATE_TRY_END(res) } \
+#define DEFLATE_TRY_END(res, outputErrorAction) } \
+  catch(const CLzOutWindowException &e) { outputErrorAction; res = e.ErrorCode; } \
   catch(const CSystemException &e) { res = e.ErrorCode; } \
   catch(...) { res = S_FALSE; }
 
@@ -381,15 +408,8 @@ HRESULT CCoder::CodeSpec(UInt32 curSize, bool finishInputStream, UInt32 inputPro
 #endif
 
 
-HRESULT CCoder::CodeReal(ISequentialOutStream *outStream, ICompressProgressInfo *progress)
+HRESULT CCoder::CodeLoop(ICompressProgressInfo *progress)
 {
-  HRESULT res;
-  
-  DEFLATE_TRY_BEGIN
-  
-  m_OutWindowStream.SetStream(outStream);
-  CCoderReleaser flusher(this);
-
   const UInt64 inStart = _needInitInStream ? 0 : m_InBitStream.GetProcessedSize();
 
   for (;;)
@@ -410,7 +430,12 @@ HRESULT CCoder::CodeReal(ISequentialOutStream *outStream, ICompressProgressInfo 
       }
     }
     
-    RINOK(CodeSpec(curSize, finishInputStream, progress ? kInputProgressLimit : 0))
+    const HRESULT res = CodeSpec(curSize, finishInputStream, progress ? kInputProgressLimit : 0);
+    #ifdef Z7_NO_EXCEPTIONS
+    RINOK(m_InBitStream.GetErrorCode())
+    RINOK(m_OutWindowStream.ErrorCode)
+    #endif
+    RINOK(res)
     
     if (_remainLen == kLenIdFinished)
       break;
@@ -422,14 +447,27 @@ HRESULT CCoder::CodeReal(ISequentialOutStream *outStream, ICompressProgressInfo 
       RINOK(progress->SetRatioInfo(&inSize, &nowPos64))
     }
   }
-  
-  flusher.NeedFlush = false;
-  res = Flush();
+
+  return S_OK;
+}
+
+
+HRESULT CCoder::CodeReal(ISequentialOutStream *outStream, ICompressProgressInfo *progress)
+{
+  HRESULT res;
+  m_OutWindowStream.SetStream(outStream);
+  CCoderReleaser releaser(this);
+  bool outputError = false;
+
+  DEFLATE_TRY_BEGIN
+  res = CodeLoop(progress);
+  DEFLATE_TRY_END(res, outputError = true)
+
+  if (outputError)
+    return res;
+  RINOK(Flush())
   if (res == S_OK && _remainLen != kLenIdNeedInit && InputEofError())
     return S_FALSE;
-  
-  DEFLATE_TRY_END(res)
-  
   return res;
 }
 
@@ -554,7 +592,11 @@ Z7_COM7F_IMF(CCoder::Read(void *data, UInt32 size, UInt32 *processedSize))
   DEFLATE_TRY_BEGIN
   m_OutWindowStream.SetMemStream((Byte *)data);
   res = CodeSpec(size, finishInputStream);
-  DEFLATE_TRY_END(res)
+  #ifdef Z7_NO_EXCEPTIONS
+  if (m_InBitStream.GetErrorCode() != S_OK)
+    res = m_InBitStream.GetErrorCode();
+  #endif
+  DEFLATE_TRY_END(res, (void)0)
   {
     const HRESULT res2 = Flush();
     if (res2 != S_OK)

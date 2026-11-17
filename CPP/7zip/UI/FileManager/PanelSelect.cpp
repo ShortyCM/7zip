@@ -11,6 +11,8 @@
 #include "LangUtils.h"
 #include "Panel.h"
 
+extern bool g_CaseSensitive;
+
 void CPanel::OnShiftSelectMessage()
 {
   if (!_mySelectMode)
@@ -192,11 +194,17 @@ void CPanel::SelectByType(bool selectMode)
     }
     else
     {
-      UString mask ('*');
-      mask += name.Ptr((unsigned)pos);
+      const UString extension = name.Ptr((unsigned)pos);
       FOR_VECTOR (i, _selectedStatusVector)
-        if (IsItem_Folder(i) == isItemFolder && DoesWildcardMatchName(mask, GetItemName(i)))
-          _selectedStatusVector[i] = selectMode;
+        if (IsItem_Folder(i) == isItemFolder)
+        {
+          const UString itemName = GetItemName(i);
+          const int dotPos = itemName.ReverseFind_Dot();
+          if (dotPos >= 0 && (g_CaseSensitive ?
+              extension.Compare(itemName.Ptr((unsigned)dotPos)) == 0 :
+              extension.IsEqualTo_NoCase(itemName.Ptr((unsigned)dotPos))))
+            _selectedStatusVector[i] = selectMode;
+        }
     }
   }
 
